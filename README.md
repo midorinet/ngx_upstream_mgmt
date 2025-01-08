@@ -189,13 +189,13 @@ curl http://localhost/api/upstreams/backend
 ```
   - Drain a server (mark as down):
 ```
-curl -X PATCH -H "Content-Type: application/json" \
+curl -X PATCH \
      -d '{"drain":true}' \
      http://localhost/api/upstreams/backend/servers/1
 ```
   - Bring a server back up:
 ```
-curl -X PATCH -H "Content-Type: application/json" \
+curl -X PATCH \
      -d '{"drain":false}' \
      http://localhost/api/upstreams/backend/servers/1
 ```

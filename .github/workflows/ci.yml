@@ -1,156 +1,133 @@
-# .github/workflows/ci.yml
 name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # Manual trigger
+    branches: [ main, master ]
   schedule:
-    - cron: '0 0 * * 0'  # Weekly runs
+    - cron: '0 0 * * 0'  # Run weekly to check against new nginx versions
 
 jobs:
-  build-and-test:
+  check-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.get-versions.outputs.matrix }}
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4
+    
+    - name: Get latest versions
+      id: get-versions
+      run: python .github/workflows/version_checker.py
+
+  build:
+    needs: check-versions
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          # NGINX versions
-          - type: nginx
-            version: 1.26.2
-            url: "https://nginx.org/download/nginx-1.26.2.tar.gz"
-          - type: nginx
-            version: 1.27.3
-            url: "https://nginx.org/download/nginx-1.27.3.tar.gz"
-          # FreeNginx versions
-          - type: freenginx
-            version: 1.26.0
-            url: "https://github.com/freenginx/nginx/archive/refs/tags/v1.26.0.tar.gz"
-          - type: freenginx
-            version: 1.27.4
-            url: "https://github.com/freenginx/nginx/archive/refs/tags/v1.27.4.tar.gz"
+        version: ${{ fromJson(needs.check-versions.outputs.matrix) }}
+      fail-fast: false
 
     steps:
     - uses: actions/checkout@v3
-      with:
-        path: ngx_upstream_mgmt
 
-    - name: Install dependencies
+    - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          libpcre3-dev \
-          zlib1g-dev \
-          libssl-dev \
-          curl \
-          git
+        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev
 
-    - name: Download and extract ${{ matrix.type }} ${{ matrix.version }}
+    - name: Parse version info
+      id: parse
       run: |
-        curl -L ${{ matrix.url }} -o nginx.tar.gz
-        tar xzf nginx.tar.gz
-        ls -la
+        IFS=- read -r type version <<< "${{ matrix.version }}"
+        echo "TYPE=$type" >> $GITHUB_OUTPUT
+        echo "VERSION=$version" >> $GITHUB_OUTPUT
 
-    - name: Build module for ${{ matrix.type }} ${{ matrix.version }}
+    - name: Cache source
+      uses: actions/cache@v3
+      with:
+        path: ${{ matrix.version }}
+        key: ${{ matrix.version }}-source
+
+    - name: Download and Extract
+      if: steps.cache-source.outputs.cache-hit != 'true'
       run: |
-        NGINX_DIR=$(ls | grep -E "nginx(-[0-9\.]+)?$" | head -n1)
-        cd $NGINX_DIR
-        echo "Building in $(pwd) with module from ../ngx_upstream_mgmt"
-        
-        # Configure differently based on type
-        if [ "${{ matrix.type }}" = "nginx" ]; then
-          ./configure --add-dynamic-module=../ngx_upstream_mgmt --with-debug
+        if [[ "${{ steps.parse.outputs.TYPE }}" == "nginx" ]]; then
+          wget https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
         else
-          ./configure --prefix=/etc/freenginx --add-dynamic-module=../ngx_upstream_mgmt --with-debug
-        fi
-        
-        make modules
-        
-        # Verify module was built
-        if [ ! -f objs/ngx_http_upstream_mgmt_module.so ]; then
-          echo "Module file not found!"
-          exit 1
+          wget https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
         fi
 
-    - name: Basic module test
+    - name: Static Code Analysis
       run: |
-        NGINX_DIR=$(ls | grep -E "nginx(-[0-9\.]+)?$" | head -n1)
-        cd $NGINX_DIR
-        
-        # Create necessary directories
-        mkdir -p /tmp/nginx/{logs,modules}
-        cp objs/ngx_http_upstream_mgmt_module.so /tmp/nginx/modules/
-        
-        # Create test config
-        cat > test.conf << EOF
-load_module "/tmp/nginx/modules/ngx_http_upstream_mgmt_module.so";
+        sudo apt-get install -y cppcheck
+        cppcheck --enable=all --suppress=missingInclude .
 
-events {
-    worker_connections 1024;
-}
+    - name: Build Module
+      run: |
+        cd ${{ matrix.version }}
+        ./configure --with-compat --add-dynamic-module=../
+        make modules
 
-http {
-    upstream backend {
-        server 127.0.0.1:8080;
-        server 127.0.0.1:8081;
-    }
+    - name: Run Tests
+      run: |
+        # Add your test commands here
+        # Example:
+        # make test
 
-    server {
-        listen 8000;
-        
-        location /api/upstreams {
-            upstream_mgmt;
-        }
-    }
-}
-EOF
-
-        # Show generated config
-        echo "=== Generated nginx config ==="
-        cat test.conf
-        echo "==========================="
-
-        # Start nginx with test config
-        ./objs/nginx -c $(pwd)/test.conf -p /tmp/nginx/
-        sleep 2
-
-        # Test API endpoints
-        curl -s http://localhost:8000/api/upstreams || true
-        curl -s http://localhost:8000/api/upstreams/backend || true
-        
-        # Stop nginx
-        ./objs/nginx -c $(pwd)/test.conf -p /tmp/nginx/ -s stop || true
-
-        # Show logs if they exist
-        if [ -f /tmp/nginx/logs/error.log ]; then
-          echo "=== Error Log ==="
-          cat /tmp/nginx/logs/error.log
-        fi
-
-    - name: Upload artifacts
-      if: always()
+    - name: Upload Build Artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ matrix.type }}-${{ matrix.version }}-module
-        path: |
-          **/objs/ngx_http_upstream_mgmt_module.so
-          **/logs/error.log
-          **/test.conf
+        name: nginx-modules-${{ matrix.version }}
+        path: ${{ matrix.version }}/objs/*.so
 
-  notify:
-    needs: build-and-test
-    if: failure()
+  security:
     runs-on: ubuntu-latest
     steps:
-    - name: Send notification
-      uses: actions/github-script@v6
+    - uses: actions/checkout@v3
+
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/init@v2
       with:
-        script: |
-          const issue = await github.rest.issues.create({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            title: '🚨 Build failed for ${{ github.ref }}',
-            body: 'Build failed, please check the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
-          });
+        languages: cpp
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+
+  style-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install clang-format
+      run: sudo apt-get install -y clang-format
+
+    - name: Check Code Style
+      run: |
+        find . -name '*.c' -o -name '*.h' | xargs clang-format -style=file -n -Werror
+
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Check Documentation
+      run: |
+        if [ ! -f "README.md" ]; then
+          echo "README.md is missing"
+          exit 1
+        fi
+        # Add more documentation checks as needed
