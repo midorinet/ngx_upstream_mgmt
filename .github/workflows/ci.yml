@@ -173,15 +173,14 @@ jobs:
 
     - name: Build and Test Module
       env:
-        NGINX_BIN: /usr/sbin/nginx
         MODULE_PATH: ${{ github.workspace }}/${{ steps.download.outputs.BUILD_DIR }}/objs/ngx_http_upstream_mgmt_module.so
       run: |
-        # Build Module
+        # Build Module and Nginx
         cd "${{ steps.download.outputs.BUILD_DIR }}"
         mkdir -p objs
         
         # Configure and build
-        CONFIG_OPTS="--add-dynamic-module=../"
+        CONFIG_OPTS="--add-dynamic-module=../ --prefix=$(pwd)/install"
         case "${{ matrix.config }}" in
           debug)
             CONFIG_OPTS="$CONFIG_OPTS --with-debug"
@@ -196,18 +195,24 @@ jobs:
         
         echo "Running ./configure $CONFIG_OPTS"
         ./configure $CONFIG_OPTS
-        make modules
+        make
+        make install
         
         # Verify module was built
         echo "Checking built module:"
         ls -l objs/ngx_http_upstream_mgmt_module.so
         file objs/ngx_http_upstream_mgmt_module.so
         
+        # Set path to our custom-built nginx
+        NGINX_BIN=$(pwd)/install/sbin/nginx
+        chmod +x $NGINX_BIN
+        
         # Run integration tests
         cd ..
         echo "Using module at: ${MODULE_PATH}"
+        echo "Using nginx binary at: ${NGINX_BIN}"
         cd tests/integration
-        PYTHONPATH=. python3 -m pytest -v test_upstream_mgmt.py --log-cli-level=DEBUG
+        PYTHONPATH=. NGINX_BIN="${NGINX_BIN}" python3 -m pytest -v test_upstream_mgmt.py --log-cli-level=DEBUG
 
   cross-platform:
     needs: [check-versions]
