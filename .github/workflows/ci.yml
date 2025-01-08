@@ -121,9 +121,8 @@ jobs:
 
     - name: Run unit tests
       run: |
-        # Compile and run unit tests
         cd tests/unit
-        gcc -o test_module test_*.c -lcheck -lpthread -lrt -lm
+        gcc -o test_module test_module.c -I. -lcheck -lpthread -lrt -lm -lsubunit
         ./test_module
 
   integration-tests:

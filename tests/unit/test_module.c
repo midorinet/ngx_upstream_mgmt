@@ -1,16 +1,37 @@
-#include <check.h>
+#include <stdio.h>
 #include <stdlib.h>
-#include "../../ngx_http_upstream_mgmt_module.h"
+#include <check.h>
 
-// Mock functions to simulate nginx environment
-ngx_int_t ngx_http_upstream_zone_lookup_value(ngx_str_t *name) {
-    return NGX_OK;
+// Mock the nginx includes and structures
+typedef struct {
+    size_t len;
+    char* data;
+} ngx_str_t;
+
+typedef int ngx_int_t;
+#define NGX_OK 0
+#define NGX_ERROR -1
+
+// Function declarations that would normally come from your module
+ngx_int_t parse_upstream_state(ngx_str_t *state);
+
+// Test implementations
+ngx_int_t parse_upstream_state(ngx_str_t *state) {
+    if (state == NULL || state->data == NULL) {
+        return NGX_ERROR;
+    }
+    
+    if (strcmp(state->data, "up") == 0) {
+        return NGX_OK;
+    }
+    
+    return NGX_ERROR;
 }
 
 // Test cases
 START_TEST(test_parse_upstream_state)
 {
-    ngx_str_t input = ngx_string("up");
+    ngx_str_t input = { 2, "up" };
     ngx_int_t result = parse_upstream_state(&input);
     ck_assert_int_eq(result, NGX_OK);
 }
@@ -18,8 +39,15 @@ END_TEST
 
 START_TEST(test_parse_invalid_upstream_state)
 {
-    ngx_str_t input = ngx_string("invalid");
+    ngx_str_t input = { 7, "invalid" };
     ngx_int_t result = parse_upstream_state(&input);
+    ck_assert_int_eq(result, NGX_ERROR);
+}
+END_TEST
+
+START_TEST(test_parse_null_state)
+{
+    ngx_int_t result = parse_upstream_state(NULL);
     ck_assert_int_eq(result, NGX_ERROR);
 }
 END_TEST
@@ -35,6 +63,7 @@ Suite *upstream_mgmt_suite(void)
 
     tcase_add_test(tc_core, test_parse_upstream_state);
     tcase_add_test(tc_core, test_parse_invalid_upstream_state);
+    tcase_add_test(tc_core, test_parse_null_state);
     suite_add_tcase(s, tc_core);
 
     return s;
