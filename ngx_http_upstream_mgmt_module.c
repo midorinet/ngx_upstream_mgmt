@@ -2,12 +2,11 @@
  * This module is an open-source project developed independently.
  * It is not affiliated with, endorsed by, or associated with NGINX or F5, Inc.
  */
+#include "ngx_http_upstream_mgmt_module.h"
 
-typedef struct {
-    ngx_str_t upstream;
-    ngx_uint_t server_id;
-    ngx_str_t state;
-} ngx_http_upstream_mgmt_request_t;
+#if (NGX_HTTP_UPSTREAM_CHECK)
+#include <ngx_http_upstream_check_module.h>
+#endif
 
 // Forward declarations
 static ngx_int_t ngx_http_upstream_mgmt_handler(ngx_http_request_t *r);

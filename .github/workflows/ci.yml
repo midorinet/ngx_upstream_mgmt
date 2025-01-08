@@ -1,0 +1,142 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly runs
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # NGINX versions
+          - type: nginx
+            version: 1.26.2
+            url: "https://nginx.org/download/nginx-1.26.2.tar.gz"
+          - type: nginx
+            version: 1.27.3
+            url: "https://nginx.org/download/nginx-1.27.3.tar.gz"
+          # FreeNginx versions
+          - type: freenginx
+            version: 1.26.0
+            url: "https://github.com/freenginx/nginx/archive/refs/tags/v1.26.0.tar.gz"
+          - type: freenginx
+            version: 1.27.4
+            url: "https://github.com/freenginx/nginx/archive/refs/tags/v1.27.4.tar.gz"
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        path: ngx_upstream_mgmt
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libpcre3-dev \
+          zlib1g-dev \
+          libssl-dev \
+          curl \
+          git
+
+    - name: Download and extract ${{ matrix.type }} ${{ matrix.version }}
+      run: |
+        curl -L ${{ matrix.url }} -o nginx.tar.gz
+        tar xzf nginx.tar.gz
+        ls -la
+
+    - name: Build module for ${{ matrix.type }} ${{ matrix.version }}
+      run: |
+        NGINX_DIR=$(ls | grep -E "nginx(-[0-9\.]+)?$" | head -n1)
+        cd $NGINX_DIR
+        echo "Building in $(pwd) with module from ../ngx_upstream_mgmt"
+        
+        # Configure differently based on type
+        if [ "${{ matrix.type }}" = "nginx" ]; then
+          ./configure --add-dynamic-module=../ngx_upstream_mgmt --with-debug
+        else
+          ./configure --prefix=/etc/freenginx --add-dynamic-module=../ngx_upstream_mgmt --with-debug
+        fi
+        
+        make modules
+        
+        # Verify module was built
+        if [ ! -f objs/ngx_http_upstream_mgmt_module.so ]; then
+          echo "Module file not found!"
+          exit 1
+        fi
+
+    - name: Basic module test
+      run: |
+        NGINX_DIR=$(ls | grep -E "nginx(-[0-9\.]+)?$" | head -n1)
+        cd $NGINX_DIR
+
+        # Create test config
+        cat > test.conf << 'EOL'
+load_module objs/ngx_http_upstream_mgmt_module.so;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream backend {
+        server 127.0.0.1:8080;
+        server 127.0.0.1:8081;
+    }
+
+    server {
+        listen 8000;
+        
+        location /api/upstreams {
+            upstream_mgmt;
+        }
+    }
+}
+EOL
+
+        # Start nginx with test config
+        ./objs/nginx -c $(pwd)/test.conf -p $(pwd)
+        sleep 2
+
+        # Test API endpoints
+        curl -s http://localhost:8000/api/upstreams
+        curl -s http://localhost:8000/api/upstreams/backend
+        
+        # Stop nginx
+        ./objs/nginx -c $(pwd)/test.conf -p $(pwd) -s stop
+
+    - name: Upload artifacts
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.type }}-${{ matrix.version }}-module
+        path: |
+          **/objs/ngx_http_upstream_mgmt_module.so
+          **/logs/error.log
+          **/test.conf
+
+  # Add notifications for failed builds
+  notify:
+    needs: build-and-test
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Send notification
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const issue = await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: '🚨 Build failed for ${{ github.ref }}',
+            body: 'Build failed, please check the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
+          });

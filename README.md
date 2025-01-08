@@ -1,3 +1,5 @@
+![CI](https://github.com/{username}/{repo}/workflows/CI/badge.svg)
+
 # NGINX Upstream Management Module
 A dynamic module for NGINX that provides HTTP API endpoints to manage upstream server states and view upstream configurations.
 
@@ -26,17 +28,17 @@ This project is an independent open-source module for NGINX Open Source and is *
 
 1. Download or clone this repository:
 ```bash
-git clone https://github.com/yourusername/nginx-upstream-mgmt.git
+git clone https://github.com/midorinet/ngx_upstream_mgmt
 ```
 Download NGINX source code:
 ```bash
-wget https://nginx.org/download/nginx-1.24.0.tar.gz
-tar -xzvf nginx-1.24.0.tar.gz
+wget https://nginx.org/download/nginx-1.26.2.tar.gz
+tar -xzvf nginx-1.26.2.tar.gz
 ```
 Build NGINX with the module:
 ```bash
-cd nginx-1.24.0
-./configure --add-dynamic-module=../nginx-upstream-mgmt
+cd nginx-1.26.2
+./configure --add-dynamic-module=../ngx_upstream_mgmt
 make
 make install
 ```
