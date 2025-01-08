@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ main, master ]
   schedule:
-    - cron: '0 0 * * 0'  # Run weekly to check against new nginx versions
+    - cron: '0 0 * * 0'  # Run weekly
 
 jobs:
   check-versions:
@@ -109,21 +109,44 @@ jobs:
       id: get-versions
       run: python scripts/version_checker.py
 
-  build:
-    needs: check-versions
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install test dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev check
+
+    - name: Run unit tests
+      run: |
+        # Compile and run unit tests
+        cd tests/unit
+        gcc -o test_module test_*.c -lcheck -lpthread -lrt -lm
+        ./test_module
+
+  integration-tests:
+    needs: [check-versions]
     runs-on: ubuntu-latest
     strategy:
       matrix:
         version: ${{ fromJson(needs.check-versions.outputs.matrix) }}
+        config: [
+          'default',
+          'debug',
+          'with-threads',
+          'with-http_ssl_module'
+        ]
       fail-fast: false
 
     steps:
     - uses: actions/checkout@v3
 
-    - name: Install Dependencies
+    - name: Install test dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev
+        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev python3-pytest curl
 
     - name: Parse version info
       id: parse
@@ -142,10 +165,86 @@ jobs:
           tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
         fi
 
-    - name: Static Code Analysis
+    - name: Build with different configurations
       run: |
-        sudo apt-get install -y cppcheck
-        cppcheck --enable=all --suppress=missingInclude .
+        BUILD_DIR="${{ steps.parse.outputs.TYPE }}-${{ steps.parse.outputs.VERSION }}"
+        cd $BUILD_DIR
+        
+        CONFIG_OPTS="--add-dynamic-module=../"
+        case "${{ matrix.config }}" in
+          debug)
+            CONFIG_OPTS="$CONFIG_OPTS --with-debug"
+            ;;
+          with-threads)
+            CONFIG_OPTS="$CONFIG_OPTS --with-threads"
+            ;;
+          with-http_ssl_module)
+            CONFIG_OPTS="$CONFIG_OPTS --with-http_ssl_module"
+            ;;
+        esac
+        
+        ./configure $CONFIG_OPTS
+        make modules
+
+    - name: Run integration tests
+      run: |
+        cd tests/integration
+        pytest -v test_*.py
+
+  cross-platform:
+    needs: [check-versions]
+    strategy:
+      matrix:
+        version: ${{ fromJson(needs.check-versions.outputs.matrix) }}
+        container: [
+          'ubuntu:22.04',
+          'ubuntu:20.04',
+          'debian:bullseye',
+          'debian:bookworm',
+          'centos:7',
+          'rockylinux:8',
+          'fedora:latest'
+        ]
+      fail-fast: false
+
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install build dependencies (Debian/Ubuntu)
+      if: contains(matrix.container, 'ubuntu') || contains(matrix.container, 'debian')
+      run: |
+        apt-get update
+        apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev wget
+
+    - name: Install build dependencies (CentOS/Rocky)
+      if: contains(matrix.container, 'centos') || contains(matrix.container, 'rocky')
+      run: |
+        yum install -y gcc make pcre-devel zlib-devel openssl-devel wget
+
+    - name: Install build dependencies (Fedora)
+      if: contains(matrix.container, 'fedora')
+      run: |
+        dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget
+
+    - name: Parse version info
+      id: parse
+      run: |
+        IFS=- read -r type version <<< "${{ matrix.version }}"
+        echo "TYPE=$type" >> $GITHUB_OUTPUT
+        echo "VERSION=$version" >> $GITHUB_OUTPUT
+
+    - name: Download and Extract
+      run: |
+        if [[ "${{ steps.parse.outputs.TYPE }}" == "nginx" ]]; then
+          wget https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+        else
+          wget https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+        fi
 
     - name: Build Module
       run: |
@@ -157,7 +256,7 @@ jobs:
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ matrix.version }}-modules
+        name: ${{ matrix.version }}-${{ matrix.container }}-modules
         path: ${{ steps.parse.outputs.TYPE }}-${{ steps.parse.outputs.VERSION }}/objs/*.so
 
   security:
@@ -175,10 +274,15 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev
 
+    - name: Get latest stable Nginx version
+      run: |
+        STABLE_VERSION=$(curl -s https://nginx.org/en/download.html | grep -oP 'nginx-\K[0-9]+\.[0-9]+\.[0-9]+(?=\.tar\.gz)' | head -1)
+        echo "NGINX_VERSION=$STABLE_VERSION" >> $GITHUB_ENV
+
     - name: Download Nginx for build
       run: |
-        wget https://nginx.org/download/nginx-1.24.0.tar.gz
-        tar -xzf nginx-1.24.0.tar.gz
+        wget https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz
+        tar -xzf nginx-${NGINX_VERSION}.tar.gz
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v2
