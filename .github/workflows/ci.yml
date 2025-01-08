@@ -155,6 +155,7 @@ jobs:
         echo "VERSION=$version" >> $GITHUB_OUTPUT
 
     - name: Download and Extract
+      id: download
       run: |
         if [[ "${{ steps.parse.outputs.TYPE }}" == "nginx" ]]; then
           wget https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
@@ -165,11 +166,18 @@ jobs:
           tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           BUILD_DIR="freenginx-${{ steps.parse.outputs.VERSION }}"
         fi
+        echo "Directory contents:"
+        ls -la
         echo "BUILD_DIR=$BUILD_DIR" >> $GITHUB_OUTPUT
 
     - name: Build with different configurations
       run: |
-        cd ${{ steps.parse.outputs.BUILD_DIR }}
+        echo "Current directory: $(pwd)"
+        echo "Directory contents:"
+        ls -la
+        echo "Build directory: ${{ steps.download.outputs.BUILD_DIR }}"
+        cd "${{ steps.download.outputs.BUILD_DIR }}"
+        echo "Configure options:"
         
         CONFIG_OPTS="--add-dynamic-module=../"
         case "${{ matrix.config }}" in
@@ -184,13 +192,14 @@ jobs:
             ;;
         esac
         
+        echo "Running ./configure $CONFIG_OPTS"
         ./configure $CONFIG_OPTS
         make modules
 
     - name: Run integration tests
       env:
         NGINX_BIN: /usr/sbin/nginx
-        MODULE_PATH: ${{ github.workspace }}/${{ steps.parse.outputs.BUILD_DIR }}/objs/ngx_http_upstream_mgmt_module.so
+        MODULE_PATH: ${{ github.workspace }}/${{ steps.download.outputs.BUILD_DIR }}/objs/ngx_http_upstream_mgmt_module.so
       run: |
         cd tests/integration
         PYTHONPATH=. pytest -v test_upstream_mgmt.py
