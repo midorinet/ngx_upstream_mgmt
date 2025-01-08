@@ -217,31 +217,149 @@ jobs:
     needs: [check-versions]
     strategy:
       matrix:
-        include:
-          - version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
-            os: 'ubuntu-2204'
+        config:
+          - os: 'ubuntu-2204'
             container: 'ubuntu:22.04'
-          - version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
-            os: 'ubuntu-2004'
+            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
+          - os: 'ubuntu-2004'
             container: 'ubuntu:20.04'
-          - version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
-            os: 'debian-bullseye'
+            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
+          - os: 'debian-bullseye'
             container: 'debian:bullseye'
-          - version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
-            os: 'debian-bookworm'
+            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
+          - os: 'debian-bookworm'
             container: 'debian:bookworm'
-          - version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
-            os: 'fedora-latest'
+            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
+          - os: 'fedora-latest'
             container: 'fedora:latest'
-          - version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
-            os: 'centos-7'
+            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
+          - os: 'centos-7'
             container: 'centos:7'
+            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
             use_composite: true
-          - version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
-            os: 'rocky-8'
+          - os: 'rocky-8'
             container: 'rockylinux:8'
+            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
             use_composite: true
       fail-fast: false
+
+    runs-on: ${{ matrix.config.use_composite && 'ubuntu-20.04' || 'ubuntu-latest' }}
+    container: ${{ !matrix.config.use_composite && matrix.config.container || '' }}
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install build dependencies (Debian/Ubuntu)
+      if: contains(matrix.config.container, 'ubuntu') || contains(matrix.config.container, 'debian')
+      shell: bash
+      run: |
+        set -x  # Enable debug output
+        apt-get update
+        apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev wget file
+        gcc --version
+
+    - name: Install build dependencies (Fedora)
+      if: contains(matrix.config.container, 'fedora')
+      shell: bash
+      run: |
+        set -x  # Enable debug output
+        dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file
+        gcc --version
+
+    - name: Setup RHEL-based environment
+      if: matrix.config.use_composite
+      uses: docker://quay.io/${{ matrix.config.container }}
+      with:
+        args: >
+          bash -c "
+          if command -v yum &> /dev/null; then
+            yum install -y gcc make pcre-devel zlib-devel openssl-devel wget file;
+          else
+            dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file;
+          fi;
+          gcc --version;
+          cd /github/workspace;
+          if [ '${{ steps.parse.outputs.TYPE }}' = 'nginx' ]; then
+            wget --no-verbose https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz;
+            tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz;
+            cd nginx-${{ steps.parse.outputs.VERSION }};
+          else
+            wget --no-verbose https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz;
+            tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz;
+            cd freenginx-${{ steps.parse.outputs.VERSION }};
+          fi;
+          ./configure --with-compat --add-dynamic-module=../;
+          make modules;
+          ls -l objs/*.so;
+          file objs/*.so;
+          "
+
+    - name: Parse version info
+      id: parse
+      shell: bash
+      run: |
+        set -x  # Enable debug output
+        version="${{ matrix.config.version }}"
+        type=$(echo "$version" | cut -d'-' -f1)
+        ver=$(echo "$version" | cut -d'-' -f2)
+        echo "TYPE=$type" >> "$GITHUB_OUTPUT"
+        echo "VERSION=$ver" >> "$GITHUB_OUTPUT"
+        echo "Parsed type: $type"
+        echo "Parsed version: $ver"
+
+    - name: Download and Extract
+      id: download
+      if: "!matrix.config.use_composite"
+      shell: bash
+      run: |
+        set -x  # Enable debug output
+        if [ "${{ steps.parse.outputs.TYPE }}" = "nginx" ]; then
+          wget --no-verbose https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          BUILD_DIR="nginx-${{ steps.parse.outputs.VERSION }}"
+        else
+          wget --no-verbose https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          BUILD_DIR="freenginx-${{ steps.parse.outputs.VERSION }}"
+        fi
+        echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_OUTPUT"
+        echo "Directory contents:"
+        ls -la
+
+    - name: Build Module
+      if: "!matrix.config.use_composite"
+      shell: bash
+      run: |
+        set -x  # Enable debug output
+        cd "${{ steps.download.outputs.BUILD_DIR }}"
+        echo "Current directory: $(pwd)"
+        echo "Running configure..."
+        ./configure --with-compat --add-dynamic-module=../
+        echo "Running make..."
+        make modules
+        echo "Build complete. Checking module:"
+        ls -l objs/ngx_http_upstream_mgmt_module.so
+        file objs/ngx_http_upstream_mgmt_module.so
+
+    - name: Upload Build Artifacts (Container)
+      if: "!matrix.config.use_composite"
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.config.version }}-${{ matrix.config.os }}-modules
+        path: |
+          ${{ steps.download.outputs.BUILD_DIR }}/objs/*.so
+          ${{ steps.download.outputs.BUILD_DIR }}/objs/*.a
+        if-no-files-found: error
+
+    - name: Upload Build Artifacts (Composite)
+      if: matrix.config.use_composite
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.config.version }}-${{ matrix.config.os }}-modules
+        path: |
+          /github/workspace/nginx-${{ steps.parse.outputs.VERSION }}/objs/*.so
+          /github/workspace/nginx-${{ steps.parse.outputs.VERSION }}/objs/*.a
+        if-no-files-found: error
 
     runs-on: ${{ matrix.use_composite && 'ubuntu-20.04' || 'ubuntu-latest' }}
     container: ${{ !matrix.use_composite && matrix.container || '' }}
