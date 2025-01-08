@@ -74,7 +74,7 @@ jobs:
           exit 1
         fi
 
-- name: Basic module test
+    - name: Basic module test
       run: |
         NGINX_DIR=$(ls | grep -E "nginx(-[0-9\.]+)?$" | head -n1)
         cd $NGINX_DIR
@@ -134,7 +134,6 @@ EOL
           **/logs/error.log
           **/test.conf
 
-  # Add notifications for failed builds
   notify:
     needs: build-and-test
     if: failure()
