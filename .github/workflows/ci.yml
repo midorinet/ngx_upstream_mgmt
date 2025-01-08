@@ -283,9 +283,11 @@ jobs:
       if: matrix.config.use_composite
       shell: bash
       run: |
-        set -x  # Enable debug output
-        docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace ${{ matrix.config.container }} \
-          bash -c "
+        docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          ${{ matrix.config.container }} \
+          bash -c '
             set -ex
             if command -v yum &> /dev/null; then
               yum install -y gcc make pcre-devel zlib-devel openssl-devel wget file
@@ -293,7 +295,7 @@ jobs:
               dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file
             fi
             gcc --version
-            if [ '${{ steps.parse.outputs.TYPE }}' = 'nginx' ]; then
+            if [ "${{ steps.parse.outputs.TYPE }}" = "nginx" ]; then
               wget --no-verbose https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
               tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
               cd nginx-${{ steps.parse.outputs.VERSION }}
@@ -305,7 +307,8 @@ jobs:
             ./configure --with-compat --add-dynamic-module=..
             make modules
             ls -l objs/*.so
-            file objs/*.so"
+            file objs/*.so
+          '
 
     - name: Download and Extract
       id: download
