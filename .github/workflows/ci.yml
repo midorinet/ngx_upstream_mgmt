@@ -213,8 +213,6 @@ jobs:
         ls -l ${MODULE_PATH} || true
         cd tests/integration
         PYTHONPATH=. python3 -m pytest -v test_upstream_mgmt.py --log-cli-level=DEBUG
-      run: |
-        cd tests/integration
         PYTHONPATH=. pytest -v test_upstream_mgmt.py
 
   cross-platform:
