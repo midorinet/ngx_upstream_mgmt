@@ -197,7 +197,7 @@ jobs:
         make
         make install
         
-        # Verify module was built
+        # Verify module was builtq
         echo "Checking built module:"
         ls -l objs/ngx_http_upstream_mgmt_module.so
         file objs/ngx_http_upstream_mgmt_module.so
@@ -354,7 +354,7 @@ jobs:
         if-no-files-found: error
       fail-fast: false
 
-    runs-on: ${{ matrix.config.use_composite && 'ubuntu-20.04' || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     container: ${{ !matrix.config.use_composite && matrix.config.container || '' }}
 
     steps:
