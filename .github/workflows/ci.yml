@@ -74,8 +74,7 @@ jobs:
           exit 1
         fi
 
-The error is likely because we need to handle the heredoc properly in YAML and shell script. Let's fix the test configuration section:
-yamlCopy    - name: Basic module test
+    - name: Basic module test
       run: |
         NGINX_DIR=$(ls | grep -E "nginx(-[0-9\.]+)?$" | head -n1)
         cd $NGINX_DIR
