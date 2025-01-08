@@ -201,6 +201,11 @@ jobs:
         NGINX_BIN: /usr/sbin/nginx
         MODULE_PATH: ${{ github.workspace }}/${{ steps.download.outputs.BUILD_DIR }}/objs/ngx_http_upstream_mgmt_module.so
       run: |
+        echo "Using module at: ${MODULE_PATH}"
+        ls -l ${MODULE_PATH} || true
+        cd tests/integration
+        PYTHONPATH=. python3 -m pytest -v test_upstream_mgmt.py --log-cli-level=DEBUG
+      run: |
         cd tests/integration
         PYTHONPATH=. pytest -v test_upstream_mgmt.py
 

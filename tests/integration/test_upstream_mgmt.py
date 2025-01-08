@@ -57,6 +57,9 @@ def nginx_server(tmp_path):
     error_log logs/error.log debug;
     pid logs/nginx.pid;
     
+    # Load dynamic modules
+    load_module {self.module_path};
+    
     events {{
         worker_connections  1024;
     }}
