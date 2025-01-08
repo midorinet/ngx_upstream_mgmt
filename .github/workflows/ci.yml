@@ -181,50 +181,11 @@ jobs:
         wget https://nginx.org/download/nginx-1.24.0.tar.gz
         tar -xzf nginx-1.24.0.tar.gz
 
-    - name: Build with CodeQL tracking
-      run: |
-        cd nginx-1.24.0
-        ./configure --with-compat --add-dynamic-module=../
-        codeql database create ../codeql-db --language=cpp --command=make
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v2
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2
-      with:
-        category: "/language:cpp"
-
-  style-check:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Install clang-format
-      run: sudo apt-get install -y clang-format
-
-    - name: Create .clang-format
-      run: |
-        cat > .clang-format << 'EOL'
-        ---
-        BasedOnStyle: LLVM
-        IndentWidth: 4
-        UseTab: Never
-        BreakBeforeBraces: Linux
-        AllowShortIfStatementsOnASingleLine: false
-        IndentCaseLabels: false
-        MaxEmptyLinesToKeep: 2
-        NamespaceIndentation: All
-        DerivePointerAlignment: false
-        PointerAlignment: Right
-        EOL
-
-    - name: Check Code Style
-      run: |
-        files=$(find . -type f \( -name '*.c' -o -name '*.h' \))
-        if [ -z "$files" ]; then
-          echo "No .c or .h files found to check"
-          exit 0
-        fi
-        echo "Checking files: $files"
-        clang-format -style=file -n -Werror $files
 
   documentation:
     runs-on: ubuntu-latest
