@@ -145,7 +145,7 @@ jobs:
     - name: Install test dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev python3-pytest curl
+        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev python3-pytest python3-requests nginx curl
 
     - name: Parse version info
       id: parse
@@ -159,15 +159,17 @@ jobs:
         if [[ "${{ steps.parse.outputs.TYPE }}" == "nginx" ]]; then
           wget https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          BUILD_DIR="nginx-${{ steps.parse.outputs.VERSION }}"
         else
           wget https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          BUILD_DIR="freenginx-${{ steps.parse.outputs.VERSION }}"
         fi
+        echo "BUILD_DIR=$BUILD_DIR" >> $GITHUB_OUTPUT
 
     - name: Build with different configurations
       run: |
-        BUILD_DIR="${{ steps.parse.outputs.TYPE }}-${{ steps.parse.outputs.VERSION }}"
-        cd $BUILD_DIR
+        cd ${{ steps.parse.outputs.BUILD_DIR }}
         
         CONFIG_OPTS="--add-dynamic-module=../"
         case "${{ matrix.config }}" in
@@ -186,9 +188,12 @@ jobs:
         make modules
 
     - name: Run integration tests
+      env:
+        NGINX_BIN: /usr/sbin/nginx
+        MODULE_PATH: ${{ github.workspace }}/${{ steps.parse.outputs.BUILD_DIR }}/objs/ngx_http_upstream_mgmt_module.so
       run: |
         cd tests/integration
-        pytest -v test_*.py
+        PYTHONPATH=. pytest -v test_upstream_mgmt.py
 
   cross-platform:
     needs: [check-versions]
@@ -290,7 +295,8 @@ jobs:
 
     - name: Build with configure
       run: |
-        cd nginx-1.24.0
+        BUILD_DIR="nginx-${NGINX_VERSION}"
+        cd $BUILD_DIR
         ./configure --with-compat --add-dynamic-module=../
         make modules
 
