@@ -162,14 +162,13 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    
     steps:
     - uses: actions/checkout@v3
-
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
-      with:
-        languages: cpp
-        queries: security-and-quality
 
     - name: Install build dependencies
       run: |
@@ -181,11 +180,21 @@ jobs:
         wget https://nginx.org/download/nginx-1.24.0.tar.gz
         tar -xzf nginx-1.24.0.tar.gz
 
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v2
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: cpp
+
+    - name: Build with configure
+      run: |
+        cd nginx-1.24.0
+        ./configure --with-compat --add-dynamic-module=../
+        make modules
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2
+      with:
+        category: "/language:cpp"
 
   documentation:
     runs-on: ubuntu-latest
