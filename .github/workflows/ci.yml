@@ -74,14 +74,18 @@ jobs:
           exit 1
         fi
 
-    - name: Basic module test
+- name: Basic module test
       run: |
         NGINX_DIR=$(ls | grep -E "nginx(-[0-9\.]+)?$" | head -n1)
         cd $NGINX_DIR
-
+        
+        # Create necessary directories
+        mkdir -p /tmp/nginx/{logs,modules}
+        cp objs/ngx_http_upstream_mgmt_module.so /tmp/nginx/modules/
+        
         # Create test config
         cat > test.conf << 'EOL'
-load_module objs/ngx_http_upstream_mgmt_module.so;
+load_module /tmp/nginx/modules/ngx_http_upstream_mgmt_module.so;
 
 events {
     worker_connections 1024;
@@ -104,7 +108,7 @@ http {
 EOL
 
         # Start nginx with test config
-        ./objs/nginx -c $(pwd)/test.conf -p $(pwd)
+        ./objs/nginx -c $(pwd)/test.conf -p /tmp/nginx/
         sleep 2
 
         # Test API endpoints
@@ -112,7 +116,13 @@ EOL
         curl -s http://localhost:8000/api/upstreams/backend
         
         # Stop nginx
-        ./objs/nginx -c $(pwd)/test.conf -p $(pwd) -s stop
+        ./objs/nginx -c $(pwd)/test.conf -p /tmp/nginx/ -s stop
+
+        # Show logs if they exist
+        if [ -f /tmp/nginx/logs/error.log ]; then
+          echo "=== Error Log ==="
+          cat /tmp/nginx/logs/error.log
+        fi
 
     - name: Upload artifacts
       if: always()
