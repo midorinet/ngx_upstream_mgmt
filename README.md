@@ -1,4 +1,4 @@
-![CI](https://github.com/{username}/{repo}/workflows/CI/badge.svg)
+![CI](https://github.com/midorinet/ngx_upstream_mgmt/workflows/CI/badge.svg)
 
 # NGINX Upstream Management Module
 A dynamic module for NGINX that provides HTTP API endpoints to manage upstream server states and view upstream configurations.
