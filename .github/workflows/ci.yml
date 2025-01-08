@@ -290,7 +290,7 @@ jobs:
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ matrix.version }}-${{ matrix.container }}-modules
+        name: ${{ matrix.version }}-${{ replace(matrix.container, ':', '-') }}-modules
         path: ${{ steps.download.outputs.BUILD_DIR }}/objs/*.so
 
   security:
