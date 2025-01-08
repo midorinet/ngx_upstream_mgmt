@@ -149,15 +149,18 @@ jobs:
 
     - name: Parse version info
       id: parse
+      shell: bash
       run: |
-        IFS=- read -r type version <<< "${{ matrix.version }}"
-        echo "TYPE=$type" >> $GITHUB_OUTPUT
-        echo "VERSION=$version" >> $GITHUB_OUTPUT
+        version="${{ matrix.version }}"
+        type=$(echo "$version" | cut -d'-' -f1)
+        ver=$(echo "$version" | cut -d'-' -f2)
+        echo "TYPE=$type" >> "$GITHUB_OUTPUT"
+        echo "VERSION=$ver" >> "$GITHUB_OUTPUT"
 
     - name: Download and Extract
       id: download
       run: |
-        if [[ "${{ steps.parse.outputs.TYPE }}" == "nginx" ]]; then
+        if [ "${{ steps.parse.outputs.TYPE }}" = "nginx" ]; then
           wget https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           BUILD_DIR="nginx-${{ steps.parse.outputs.VERSION }}"
@@ -166,22 +169,18 @@ jobs:
           tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           BUILD_DIR="freenginx-${{ steps.parse.outputs.VERSION }}"
         fi
-        echo "Directory contents:"
-        ls -la
-        echo "BUILD_DIR=$BUILD_DIR" >> $GITHUB_OUTPUT
+        echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_OUTPUT"
 
-    - name: Build with different configurations
+    - name: Build and Test Module
+      env:
+        NGINX_BIN: /usr/sbin/nginx
+        MODULE_PATH: ${{ github.workspace }}/${{ steps.download.outputs.BUILD_DIR }}/objs/ngx_http_upstream_mgmt_module.so
       run: |
-        echo "Current directory: $(pwd)"
-        echo "Directory contents:"
-        ls -la
-        echo "Build directory: ${{ steps.download.outputs.BUILD_DIR }}"
+        # Build Module
         cd "${{ steps.download.outputs.BUILD_DIR }}"
-        echo "Configure options:"
-        
-        # Make sure objs directory exists
         mkdir -p objs
         
+        # Configure and build
         CONFIG_OPTS="--add-dynamic-module=../"
         case "${{ matrix.config }}" in
           debug)
@@ -199,23 +198,16 @@ jobs:
         ./configure $CONFIG_OPTS
         make modules
         
-        # Check if module was built
+        # Verify module was built
         echo "Checking built module:"
         ls -l objs/ngx_http_upstream_mgmt_module.so
         file objs/ngx_http_upstream_mgmt_module.so
-
-    - name: Run integration tests
-      env:
-        NGINX_BIN: /usr/sbin/nginx
-        MODULE_PATH: ${{ github.workspace }}/${{ steps.download.outputs.BUILD_DIR }}/objs/ngx_http_upstream_mgmt_module.so
-      run: |
+        
+        # Run integration tests
+        cd ..
         echo "Using module at: ${MODULE_PATH}"
-        ls -l ${MODULE_PATH} || true
         cd tests/integration
         PYTHONPATH=. python3 -m pytest -v test_upstream_mgmt.py --log-cli-level=DEBUG
-      run: |
-        cd tests/integration
-        PYTHONPATH=. pytest -v test_upstream_mgmt.py
 
   cross-platform:
     needs: [check-versions]
@@ -241,41 +233,52 @@ jobs:
 
     - name: Install build dependencies (Debian/Ubuntu)
       if: contains(matrix.container, 'ubuntu') || contains(matrix.container, 'debian')
+      shell: bash
       run: |
         apt-get update
         apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev wget
 
     - name: Install build dependencies (CentOS/Rocky)
       if: contains(matrix.container, 'centos') || contains(matrix.container, 'rocky')
+      shell: bash
       run: |
         yum install -y gcc make pcre-devel zlib-devel openssl-devel wget
 
     - name: Install build dependencies (Fedora)
       if: contains(matrix.container, 'fedora')
+      shell: bash
       run: |
         dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget
 
     - name: Parse version info
       id: parse
+      shell: bash
       run: |
-        IFS=- read -r type version <<< "${{ matrix.version }}"
-        echo "TYPE=$type" >> $GITHUB_OUTPUT
-        echo "VERSION=$version" >> $GITHUB_OUTPUT
+        version="${{ matrix.version }}"
+        type=$(echo "$version" | cut -d'-' -f1)
+        ver=$(echo "$version" | cut -d'-' -f2)
+        echo "TYPE=$type" >> "$GITHUB_OUTPUT"
+        echo "VERSION=$ver" >> "$GITHUB_OUTPUT"
 
     - name: Download and Extract
+      shell: bash
+      id: download
       run: |
-        if [[ "${{ steps.parse.outputs.TYPE }}" == "nginx" ]]; then
+        if [ "${{ steps.parse.outputs.TYPE }}" = "nginx" ]; then
           wget https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          BUILD_DIR="nginx-${{ steps.parse.outputs.VERSION }}"
         else
           wget https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          BUILD_DIR="freenginx-${{ steps.parse.outputs.VERSION }}"
         fi
+        echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_OUTPUT"
 
     - name: Build Module
+      shell: bash
       run: |
-        BUILD_DIR="${{ steps.parse.outputs.TYPE }}-${{ steps.parse.outputs.VERSION }}"
-        cd $BUILD_DIR
+        cd "${{ steps.download.outputs.BUILD_DIR }}"
         ./configure --with-compat --add-dynamic-module=../
         make modules
 
@@ -283,7 +286,7 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: ${{ matrix.version }}-${{ matrix.container }}-modules
-        path: ${{ steps.parse.outputs.TYPE }}-${{ steps.parse.outputs.VERSION }}/objs/*.so
+        path: ${{ steps.download.outputs.BUILD_DIR }}/objs/*.so
 
   security:
     runs-on: ubuntu-latest
