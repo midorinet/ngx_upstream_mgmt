@@ -175,7 +175,6 @@ jobs:
       env:
         MODULE_PATH: ${{ github.workspace }}/${{ steps.download.outputs.BUILD_DIR }}/objs/ngx_http_upstream_mgmt_module.so
       run: |
-        # Build Module and Nginx
         cd "${{ steps.download.outputs.BUILD_DIR }}"
         mkdir -p objs
         
@@ -219,79 +218,101 @@ jobs:
     strategy:
       matrix:
         version: ${{ fromJson(needs.check-versions.outputs.matrix) }}
-        container: [
-          'ubuntu:22.04',
-          'ubuntu:20.04',
-          'debian:bullseye',
-          'debian:bookworm',
-          'centos:7',
-          'rockylinux:8',
-          'fedora:latest'
+        distro: [
+          {name: 'ubuntu-2204', container: 'ubuntu:22.04'},
+          {name: 'ubuntu-2004', container: 'ubuntu:20.04'},
+          {name: 'debian-bullseye', container: 'debian:bullseye'},
+          {name: 'debian-bookworm', container: 'debian:bookworm'},
+          {name: 'centos-7', container: 'centos:7'},
+          {name: 'rocky-8', container: 'rockylinux:8'},
+          {name: 'fedora-latest', container: 'fedora:latest'}
         ]
       fail-fast: false
 
     runs-on: ubuntu-latest
-    container: ${{ matrix.container }}
+    container: ${{ matrix.distro.container }}
 
     steps:
     - uses: actions/checkout@v3
 
     - name: Install build dependencies (Debian/Ubuntu)
-      if: contains(matrix.container, 'ubuntu') || contains(matrix.container, 'debian')
+      if: contains(matrix.distro.container, 'ubuntu') || contains(matrix.distro.container, 'debian')
       shell: bash
       run: |
+        set -x  # Enable debug output
         apt-get update
         apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev wget
+        gcc --version
 
     - name: Install build dependencies (CentOS/Rocky)
-      if: contains(matrix.container, 'centos') || contains(matrix.container, 'rocky')
+      if: contains(matrix.distro.container, 'centos') || contains(matrix.distro.container, 'rocky')
       shell: bash
       run: |
+        set -x  # Enable debug output
         yum install -y gcc make pcre-devel zlib-devel openssl-devel wget
+        gcc --version
 
     - name: Install build dependencies (Fedora)
-      if: contains(matrix.container, 'fedora')
+      if: contains(matrix.distro.container, 'fedora')
       shell: bash
       run: |
+        set -x  # Enable debug output
         dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget
+        gcc --version
 
     - name: Parse version info
       id: parse
       shell: bash
       run: |
+        set -x  # Enable debug output
         version="${{ matrix.version }}"
         type=$(echo "$version" | cut -d'-' -f1)
         ver=$(echo "$version" | cut -d'-' -f2)
         echo "TYPE=$type" >> "$GITHUB_OUTPUT"
         echo "VERSION=$ver" >> "$GITHUB_OUTPUT"
+        echo "Parsed type: $type"
+        echo "Parsed version: $ver"
 
     - name: Download and Extract
-      shell: bash
       id: download
+      shell: bash
       run: |
+        set -x  # Enable debug output
         if [ "${{ steps.parse.outputs.TYPE }}" = "nginx" ]; then
-          wget https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          wget --no-verbose https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           BUILD_DIR="nginx-${{ steps.parse.outputs.VERSION }}"
         else
-          wget https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+          wget --no-verbose https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
           BUILD_DIR="freenginx-${{ steps.parse.outputs.VERSION }}"
         fi
         echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_OUTPUT"
+        echo "Directory contents:"
+        ls -la
 
     - name: Build Module
       shell: bash
       run: |
+        set -x  # Enable debug output
         cd "${{ steps.download.outputs.BUILD_DIR }}"
+        echo "Current directory: $(pwd)"
+        echo "Running configure..."
         ./configure --with-compat --add-dynamic-module=../
+        echo "Running make..."
         make modules
+        echo "Build complete. Checking module:"
+        ls -l objs/ngx_http_upstream_mgmt_module.so
+        file objs/ngx_http_upstream_mgmt_module.so
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ matrix.version }}-${{ replace(matrix.container, ':', '-') }}-modules
-        path: ${{ steps.download.outputs.BUILD_DIR }}/objs/*.so
+        name: ${{ matrix.version }}-${{ matrix.distro.name }}-modules
+        path: |
+          ${{ steps.download.outputs.BUILD_DIR }}/objs/*.so
+          ${{ steps.download.outputs.BUILD_DIR }}/objs/*.a
+        if-no-files-found: error
 
   security:
     runs-on: ubuntu-latest
