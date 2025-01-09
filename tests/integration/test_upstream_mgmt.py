@@ -108,24 +108,30 @@ def test_set_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
     data = response.json()
+    print(f"Initial Response Data: {data}")
     server_id = data['backend']['servers'][0]['id']
-
+    
     # Test setting drain to true
     url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}/'
+    print(f"URL: {url}")
     payload = {"drain": True}
+    print(f"Payload: {json.dumps(payload)}")
     
     drain_response = requests.patch(
         url,
-        json=payload,  # Use json instead of data
+        data=json.dumps(payload),  # Explicitly serialize to JSON
         headers={
+            'Content-Type': 'application/json',
             'Accept': '*/*'
         }
     )
+    print(f"Response Status Code: {drain_response.status_code}")
+    print(f"Response Text: {drain_response.text}")
+    print(f"Request Headers: {drain_response.request.headers}")
     
     if drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
-        
-    print(f"Response text: {drain_response.text}")  # Debug print
+    
     assert drain_response.status_code == 200
     assert drain_response.json() == {"status": "success"}
 
