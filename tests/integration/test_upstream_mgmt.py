@@ -111,10 +111,10 @@ def test_set_server_drain_state(nginx_server):
     server_id = data['backend']['servers'][0]['id']
 
     # Test setting drain to true
-    url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}'
+    # Adding trailing slash to the URL
+    url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}/'
     payload = '{"drain":true}'
     
-    # Send request exactly like curl
     drain_response = requests.patch(
         url,
         data=payload,
@@ -127,9 +127,9 @@ def test_set_server_drain_state(nginx_server):
     
     if drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
+        
+    print(f"Response text: {drain_response.text}")  # Debug print
     assert drain_response.status_code == 200
-    
-    # Check success response
     assert drain_response.json() == {"status": "success"}
 
     # Verify the server state was updated
@@ -152,8 +152,9 @@ def test_unset_server_drain_state(nginx_server):
 
     # First set drain to true
     payload = '{"drain":true}'
+    url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}/'  # Added trailing slash
     set_drain_response = requests.patch(
-        f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
+        url,
         data=payload,
         headers={
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -169,7 +170,7 @@ def test_unset_server_drain_state(nginx_server):
     # Then set drain to false
     payload = '{"drain":false}'
     unset_drain_response = requests.patch(
-        f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
+        url,  # Same URL with trailing slash
         data=payload,
         headers={
             'Content-Type': 'application/x-www-form-urlencoded',
