@@ -334,8 +334,21 @@ jobs:
             ls -l objs/*.so
             file objs/*.so'
 
+    - name: Install build dependencies (Debian/Ubuntu)
+      if: contains(matrix.config.container, 'ubuntu') || contains(matrix.config.container, 'debian')
+      shell: bash
+      run: |
+        apt-get update
+        apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev wget gcc make
+
+    - name: Install build dependencies (Fedora)
+      if: contains(matrix.config.container, 'fedora')
+      shell: bash
+      run: |
+        dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file
+
     - name: Download and Extract
-      id: download    # Add this line to create a step ID
+      id: download
       if: "!matrix.config.use_composite"
       shell: bash
       run: |
@@ -349,7 +362,7 @@ jobs:
         fi
         echo "Building for type: $TYPE version: $VERSION"
         BUILD_DIR="${TYPE}-${VERSION}"
-        echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_OUTPUT"   # Use $GITHUB_OUTPUT instead of >> GITHUB_OUTPUT
+        echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_OUTPUT"
         
         if [ "$TYPE" = "nginx" ]; then
           wget --no-verbose "https://nginx.org/download/${BUILD_DIR}.tar.gz"
