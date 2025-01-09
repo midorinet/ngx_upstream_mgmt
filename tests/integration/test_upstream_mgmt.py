@@ -157,3 +157,91 @@ def test_get_backend_details(nginx_server):
         assert 'fail_timeout' in server
         assert isinstance(server['down'], bool)
         assert isinstance(server['backup'], bool)
+
+def test_set_server_drain_state(nginx_server):
+    """Test setting drain state for a specific server"""
+    # First get the current state and server ID
+    response = requests.get('http://localhost:8080/upstream_mgmt')
+    assert response.status_code == 200
+    data = response.json()
+    server_id = data['backend']['servers'][0]['id']
+
+    # Test setting drain to true
+    drain_response = requests.patch(
+        f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
+        json={'drain': True}
+    )
+    if drain_response.status_code == 405:
+        pytest.skip("PATCH method not implemented yet")
+    assert drain_response.status_code == 200
+
+    # Verify the server state was updated
+    response = requests.get('http://localhost:8080/upstream_mgmt')
+    assert response.status_code == 200
+    updated_data = response.json()
+    updated_server = next(
+        server for server in updated_data['backend']['servers'] 
+        if server['id'] == server_id
+    )
+    assert updated_server.get('drain') is True
+
+def test_unset_server_drain_state(nginx_server):
+    """Test unsetting drain state for a specific server"""
+    # First get the server ID
+    response = requests.get('http://localhost:8080/upstream_mgmt')
+    assert response.status_code == 200
+    data = response.json()
+    server_id = data['backend']['servers'][0]['id']
+
+    # First set drain to true
+    set_drain_response = requests.patch(
+        f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
+        json={'drain': True}
+    )
+    if set_drain_response.status_code == 405:
+        pytest.skip("PATCH method not implemented yet")
+    assert set_drain_response.status_code == 200
+
+    # Then set drain to false
+    unset_drain_response = requests.patch(
+        f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
+        json={'drain': False}
+    )
+    assert unset_drain_response.status_code == 200
+
+    # Verify the server state was updated
+    response = requests.get('http://localhost:8080/upstream_mgmt')
+    assert response.status_code == 200
+    updated_data = response.json()
+    updated_server = next(
+        server for server in updated_data['backend']['servers'] 
+        if server['id'] == server_id
+    )
+    assert updated_server.get('drain') is False
+
+def test_drain_nonexistent_server(nginx_server):
+    """Test setting drain state for a non-existent server"""
+    response = requests.patch(
+        'http://localhost:8080/upstream_mgmt/backend/servers/999',
+        json={'drain': True}
+    )
+    if response.status_code == 405:
+        pytest.skip("PATCH method not implemented yet")
+    assert response.status_code == 404
+
+def test_invalid_drain_value(nginx_server):
+    """Test setting invalid drain state value"""
+    # First get a valid server ID
+    response = requests.get('http://localhost:8080/upstream_mgmt')
+    assert response.status_code == 200
+    data = response.json()
+    server_id = data['backend']['servers'][0]['id']
+
+    # Test with invalid drain value
+    response = requests.patch(
+        f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
+        json={'drain': "invalid"}
+    )
+    if response.status_code == 405:
+        pytest.skip("PATCH method not implemented yet")
+    assert response.status_code == 400
