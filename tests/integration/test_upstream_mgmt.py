@@ -47,8 +47,8 @@ class NginxServer:
         server {{
             listen 8080;
             
-            location /upstream_mgmt {{
-                upstream_mgmt;
+            location /api/upstreams {{
+                api/upstreams;
             }}
             
             location / {{
@@ -89,7 +89,7 @@ class NginxServer:
 def nginx_server(tmp_path):
     # Get paths from environment or use defaults
     nginx_bin = os.getenv('NGINX_BIN', '/usr/sbin/nginx')
-    module_path = os.getenv('MODULE_PATH', './ngx_http_upstream_mgmt_module.so')
+    module_path = os.getenv('MODULE_PATH', './ngx_http_api/upstreams_module.so')
     
     # Create test configuration path
     config_path = tmp_path / "nginx.conf"
@@ -105,14 +105,14 @@ def nginx_server(tmp_path):
 def test_set_server_drain_state(nginx_server):
     """Test setting drain state for a specific server"""
     # Get the current state and server ID
-    response = requests.get('http://localhost:8080/upstream_mgmt')
+    response = requests.get('http://localhost:8080/api/upstreams')
     assert response.status_code == 200
     data = response.json()
     print(f"Initial Response Data: {data}")
     server_id = data['backend']['servers'][0]['id']
     
     # Construct URL without trailing slash
-    url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}'
+    url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
     print(f"URL: {url}")
     payload = {"drain": True}
     print(f"Payload: {json.dumps(payload)}")
@@ -138,7 +138,7 @@ def test_set_server_drain_state(nginx_server):
     assert drain_response.json() == {"status": "success"}
 
     # Verify server state
-    response = requests.get('http://localhost:8080/upstream_mgmt')
+    response = requests.get('http://localhost:8080/api/upstreams')
     assert response.status_code == 200
     updated_data = response.json()
     updated_server = next(
@@ -150,14 +150,14 @@ def test_set_server_drain_state(nginx_server):
 def test_unset_server_drain_state(nginx_server):
     """Test unsetting drain state for a specific server"""
     # First get the server ID
-    response = requests.get('http://localhost:8080/upstream_mgmt')
+    response = requests.get('http://localhost:8080/api/upstreams')
     assert response.status_code == 200
     data = response.json()
     server_id = data['backend']['servers'][0]['id']
 
     # First set drain to true
     payload = {"drain": True}
-    url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}/'
+    url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}/'
 
     set_drain_response = requests.patch(
         url,
@@ -184,7 +184,7 @@ def test_unset_server_drain_state(nginx_server):
     assert unset_drain_response.json() == {"status": "success"}
 
     # Verify the server state was updated
-    response = requests.get('http://localhost:8080/upstream_mgmt')
+    response = requests.get('http://localhost:8080/api/upstreams')
     assert response.status_code == 200
     updated_data = response.json()
     updated_server = next(
