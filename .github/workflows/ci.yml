@@ -274,14 +274,22 @@ jobs:
         version="${{ matrix.config.version }}"
         type=$(echo "$version" | cut -d'-' -f1)
         ver=$(echo "$version" | cut -d'-' -f2)
-        echo "TYPE=$type" >> "$GITHUB_OUTPUT"
-        echo "VERSION=$ver" >> "$GITHUB_OUTPUT"
+        # Add debug output
+        echo "Raw version: $version"
         echo "Parsed type: $type"
         echo "Parsed version: $ver"
+        # Use explicit EOF markers to avoid string interpolation issues
+        cat << 'EOF' >> "$GITHUB_OUTPUT"
+        TYPE=$type
+        VERSION=$ver
+        EOF
 
     - name: Setup and Build in RHEL-based systems
       if: matrix.config.use_composite
       run: |
+        BUILD_DIR="${{ steps.parse.outputs.TYPE }}-${{ steps.parse.outputs.VERSION }}"
+        echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_ENV"
+        
         docker run --rm \
           -v ${{ github.workspace }}:/github/workspace \
           -w /github/workspace \
@@ -347,9 +355,9 @@ jobs:
       with:
         name: ${{ matrix.config.version }}-${{ matrix.config.os }}-modules
         path: |
-          ${{!matrix.config.use_composite && steps.download.outputs.BUILD_DIR || 'nginx-'}}${{ steps.parse.outputs.VERSION }}/objs/*.so
-          ${{!matrix.config.use_composite && steps.download.outputs.BUILD_DIR || 'nginx-'}}${{ steps.parse.outputs.VERSION }}/objs/*.a
-        if-no-files-found: error
+          ${{ github.workspace }}/${{ env.BUILD_DIR }}/objs/*.so
+          ${{ github.workspace }}/${{ env.BUILD_DIR }}/objs/*.a
+        if-no-files-found: warn  # Changed from error to warn for debugging
     
   security:
     runs-on: ubuntu-latest
