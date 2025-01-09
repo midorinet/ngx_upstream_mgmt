@@ -339,7 +339,7 @@ jobs:
       shell: bash
       run: |
         apt-get update
-        apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev wget gcc make
+        apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev wget gcc make file
 
     - name: Install build dependencies (Fedora)
       if: contains(matrix.config.container, 'fedora')
