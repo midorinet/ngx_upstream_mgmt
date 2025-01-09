@@ -436,9 +436,14 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
     if (ngx_strnstr(request_body.data, "\"drain\":true", request_body.len)) {
         req.state.data = (u_char *) "drain";
         req.state.len = 5;
-    } else {
+    } else if (ngx_strnstr(request_body.data, "\"drain\":false", request_body.len)) {
         req.state.data = (u_char *) "up";
         req.state.len = 2;
+    } else {
+        response.data = (u_char *) "{\"error\":\"Invalid drain value\"}";
+        response.len = ngx_strlen(response.data);
+        r->headers_out.status = NGX_HTTP_BAD_REQUEST;  // Add this line
+        goto send_response;
     }
 
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Parsed upstream: %V, server_id: %ui", &req.upstream, req.server_id);
@@ -469,6 +474,7 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid server ID: %ui for upstream: %V", req.server_id, &uscfp[i]->host);
                 response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
                 response.len = ngx_strlen(response.data);
+                r->headers_out.status = NGX_HTTP_NOT_FOUND;  // Add this line
                 goto send_response;
             }
 
@@ -513,11 +519,14 @@ send_response:
     out.buf = b;
     out.next = NULL;
 
-    r->headers_out.status = NGX_HTTP_OK;
+    // Only set 200 if not already set to an error code
+    if (r->headers_out.status == 0) {
+        r->headers_out.status = NGX_HTTP_OK;
+    }
+    
     ngx_str_set(&r->headers_out.content_type, "application/json");
     r->headers_out.content_length_n = response.len;
 
     ngx_http_send_header(r);
 
     return ngx_http_output_filter(r, &out);
-}
