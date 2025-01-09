@@ -104,23 +104,20 @@ def nginx_server(tmp_path):
 
 def test_set_server_drain_state(nginx_server):
     """Test setting drain state for a specific server"""
-    # Get the current state and server ID
+    # First get the current state and server ID
     response = requests.get('http://localhost:8080/api/upstreams')
     assert response.status_code == 200
     data = response.json()
     print(f"Initial Response Data: {data}")
     server_id = data['backend']['servers'][0]['id']
     
-    # Construct URL without trailing slash
+    # Test setting drain to true
     url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
-    print(f"URL: {url}")
     payload = {"drain": True}
-    print(f"Payload: {json.dumps(payload)}")
     
-    # Send PATCH request
     drain_response = requests.patch(
         url,
-        data=json.dumps(payload),  # Explicit serialization
+        json=payload,
         headers={
             'Content-Type': 'application/json',
             'Accept': '*/*'
@@ -128,21 +125,20 @@ def test_set_server_drain_state(nginx_server):
     )
     print(f"Response Status Code: {drain_response.status_code}")
     print(f"Response Text: {drain_response.text}")
-    print(f"Request Headers: {drain_response.request.headers}")
     
-    if drain_response.status_code == 405:
-        pytest.skip("PATCH method not implemented yet")
-    
-    # Verify response
     assert drain_response.status_code == 200
     assert drain_response.json() == {"status": "success"}
 
-    # Verify server state
+    # Delay to allow state update
+    time.sleep(2)
+
+    # Verify the server state was updated
     response = requests.get('http://localhost:8080/api/upstreams')
     assert response.status_code == 200
     updated_data = response.json()
+    print(f"Updated Response Data: {updated_data}")
     updated_server = next(
-        server for server in updated_data['backend']['servers'] 
+        server for server in updated_data['backend']['servers']
         if server['id'] == server_id
     )
     assert updated_server['down'] is True
