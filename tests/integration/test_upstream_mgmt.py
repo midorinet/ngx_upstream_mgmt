@@ -48,7 +48,7 @@ class NginxServer:
             listen 8080;
             
             location /api/upstreams {{
-                api/upstreams;
+                upstream_mgmt;
             }}
             
             location / {{
