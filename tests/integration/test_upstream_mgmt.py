@@ -109,10 +109,12 @@ def test_set_server_drain_state(nginx_server):
     assert response.status_code == 200
     data = response.json()
     print(f"Initial Response Data: {data}")
-    server_id = data['backend']['servers'][0]['id']
+    backend = 'backend'  # Use 'backend' as the key for testing
+    server_id = data[backend]['servers'][0]['id']
     
     # Test setting drain to true
-    url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
+    url = f'http://localhost:8080/api/upstreams/{backend}/servers/{server_id}'
+    print(f"PATCH URL: {url}")
     payload = {"drain": True}
     
     drain_response = requests.patch(
@@ -137,10 +139,13 @@ def test_set_server_drain_state(nginx_server):
     assert response.status_code == 200
     updated_data = response.json()
     print(f"Updated Response Data: {updated_data}")
+    updated_backend = updated_data.get(backend, {})
     updated_server = next(
-        server for server in updated_data['backend']['servers']
-        if server['id'] == server_id
+        (server for server in updated_backend.get('servers', [])
+         if server['id'] == server_id),
+        None
     )
+    assert updated_server is not None, f"Server with ID {server_id} not found in backend '{backend}'"
     assert updated_server['down'] is True
 
 def test_unset_server_drain_state(nginx_server):
