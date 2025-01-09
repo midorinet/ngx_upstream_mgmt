@@ -111,17 +111,14 @@ def test_set_server_drain_state(nginx_server):
     server_id = data['backend']['servers'][0]['id']
 
     # Test setting drain to true
-    # Adding trailing slash to the URL
     url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}/'
-    payload = '{"drain":true}'
+    payload = {"drain": True}
     
     drain_response = requests.patch(
         url,
-        data=payload,
+        json=payload,  # Use json instead of data
         headers={
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': '*/*',
-            'Content-Length': str(len(payload))
+            'Accept': '*/*'
         }
     )
     
@@ -151,15 +148,14 @@ def test_unset_server_drain_state(nginx_server):
     server_id = data['backend']['servers'][0]['id']
 
     # First set drain to true
-    payload = '{"drain":true}'
-    url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}/'  # Added trailing slash
+    payload = {"drain": True}
+    url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}/'
+
     set_drain_response = requests.patch(
         url,
-        data=payload,
+        json=payload,  # Use json instead of data
         headers={
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': '*/*',
-            'Content-Length': str(len(payload))
+            'Accept': '*/*'
         }
     )
     if set_drain_response.status_code == 405:
@@ -168,14 +164,12 @@ def test_unset_server_drain_state(nginx_server):
     assert set_drain_response.json() == {"status": "success"}
 
     # Then set drain to false
-    payload = '{"drain":false}'
+    payload = {"drain": False}
     unset_drain_response = requests.patch(
-        url,  # Same URL with trailing slash
-        data=payload,
+        url,
+        json=payload,  # Use json instead of data
         headers={
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': '*/*',
-            'Content-Length': str(len(payload))
+            'Accept': '*/*'
         }
     )
     assert unset_drain_response.status_code == 200
