@@ -164,6 +164,8 @@ def test_set_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
     data = response.json()
+    print("\nInitial GET response:")
+    print(data)
     server_id = data['backend']['servers'][0]['id']
 
     # Test setting drain to true
@@ -171,6 +173,9 @@ def test_set_server_drain_state(nginx_server):
         f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
         json={'drain': True}
     )
+    print("\nPATCH response status code:", drain_response.status_code)
+    print("PATCH response body:", drain_response.text)
+    
     if drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
     assert drain_response.status_code == 200
@@ -179,10 +184,16 @@ def test_set_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
     updated_data = response.json()
+    print("\nGET response after PATCH:")
+    print(updated_data)
+    
     updated_server = next(
         server for server in updated_data['backend']['servers'] 
         if server['id'] == server_id
     )
+    print("\nUpdated server data:")
+    print(updated_server)
+    
     assert updated_server.get('drain') is True
 
 def test_unset_server_drain_state(nginx_server):
