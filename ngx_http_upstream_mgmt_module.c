@@ -17,13 +17,13 @@ static char *ngx_http_upstream_mgmt(ngx_conf_t *cf, ngx_command_t *cmd, void *co
 static ngx_int_t ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_name);
 // Module configuration commands
 static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
-    { 
+    {
         ngx_string("upstream_mgmt"),
-        NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
+        NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
         ngx_http_upstream_mgmt,
         0,
         0,
-        NULL 
+        NULL
     },
     ngx_null_command
 };
@@ -37,22 +37,22 @@ static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
     NULL,                               /* create server configuration */
     NULL,                               /* merge server configuration */
     NULL,                               /* create location configuration */
-    NULL                               /* merge location configuration */
+    NULL                                /* merge location configuration */
 };
 
 // Module definition
 ngx_module_t ngx_http_upstream_mgmt_module = {
     NGX_MODULE_V1,
-    &ngx_http_upstream_mgmt_module_ctx,    /* module context */
-    ngx_http_upstream_mgmt_commands,       /* module directives */
-    NGX_HTTP_MODULE,                       /* module type */
-    NULL,                                  /* init master */
-    NULL,                                  /* init module */
-    NULL,                                  /* init process */
-    NULL,                                  /* init thread */
-    NULL,                                  /* exit thread */
-    NULL,                                  /* exit process */
-    NULL,                                  /* exit master */
+    &ngx_http_upstream_mgmt_module_ctx, /* module context */
+    ngx_http_upstream_mgmt_commands,    /* module directives */
+    NGX_HTTP_MODULE,                    /* module type */
+    NULL,                               /* init master */
+    NULL,                               /* init module */
+    NULL,                               /* init process */
+    NULL,                               /* init thread */
+    NULL,                               /* exit thread */
+    NULL,                               /* exit process */
+    NULL,                               /* exit master */
     NGX_MODULE_V1_PADDING
 };
 
@@ -181,34 +181,25 @@ static ngx_int_t
 ngx_http_upstream_mgmt_handler(ngx_http_request_t *r)
 {
     ngx_int_t rc;
+    ngx_str_t location_prefix = r->uri;
     ngx_str_t upstream_name;
 
     if (r->method == NGX_HTTP_GET) {
-        // Parse URI to determine if it's a specific upstream request
-        u_char *uri = r->uri.data;
-        size_t prefix_len = ngx_strlen("/api/upstreams/");
-        
-        if (r->uri.len == prefix_len - 1) {  // exact match for /api/upstreams
-            return ngx_http_upstream_mgmt_list(r);
-        } else if (r->uri.len > prefix_len) {  // matches /api/upstreams/something
-            upstream_name.data = uri + prefix_len;
-            upstream_name.len = r->uri.len - prefix_len;
-            
-            // Check if this is a server-specific request
-            u_char *server_part = ngx_strlchr(upstream_name.data, 
-                                            upstream_name.data + upstream_name.len, 
-                                            '/');
-            if (server_part) {
-                // This is a server-specific request, handled by PATCH
-                return NGX_HTTP_NOT_ALLOWED;
+        // Handle listing of upstreams or specific upstreams
+        if (ngx_strncmp(r->uri.data, location_prefix.data, location_prefix.len) == 0) {
+            if (r->uri.len == location_prefix.len) {
+                return ngx_http_upstream_mgmt_list(r);
+            } else {
+                upstream_name.data = r->uri.data + location_prefix.len;
+                upstream_name.len = r->uri.len - location_prefix.len;
+
+                // Handle server-specific listing
+                return ngx_http_upstream_mgmt_list_single(r, &upstream_name);
             }
-            
-            return ngx_http_upstream_mgmt_list_single(r, &upstream_name);
         }
     } else if (r->method == NGX_HTTP_PATCH) {
+        // Handle PATCH requests
         r->request_body_in_single_buf = 1;
-        r->request_body_file_log_level = 0;
-
         rc = ngx_http_read_client_request_body(r, ngx_http_upstream_mgmt_body_handler);
         if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
             return rc;
@@ -239,22 +230,19 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
     uscfp = umcf->upstreams.elts;
 
     // Calculate required buffer size
-    len = 2;  // {}
+    len = 2; // {}
+
     for (i = 0; i < umcf->upstreams.nelts; i++) {
         if (i > 0) {
-            len++;  // ,
+            len++; // ,
         }
-        len += 3 + uscfp[i]->host.len + 10;  // "name":"", "servers":
-        len += 2;  // []
+        len += uscfp[i]->host.len + 20; // "name":[], "servers":
 
         if (uscfp[i]->servers) {
             servers = uscfp[i]->servers->elts;
             for (j = 0; j < uscfp[i]->servers->nelts; j++) {
-                if (j > 0) {
-                    len++;  // ,
-                }
-                len += 200;  // Conservative estimate for server info
-                len += servers[j].name.len;  // Server address length
+                len += 200; // Conservative estimate for server details
+                len += servers[j].name.len;
             }
         }
     }
@@ -265,10 +253,10 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    // Write JSON object
+    // Start JSON object
     p = b->pos;
     *p++ = '{';
-    
+
     for (i = 0; i < umcf->upstreams.nelts; i++) {
         if (i > 0) {
             *p++ = ',';
@@ -281,8 +269,8 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
                 if (j > 0) {
                     *p++ = ',';
                 }
-                
-                p = ngx_sprintf(p, 
+                p = ngx_sprintf(
+                    p,
                     "{"
                     "\"id\":%ui,"
                     "\"server\":\"%V\","
@@ -309,36 +297,30 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
 
         p = ngx_sprintf(p, "]}");
     }
-    
+
+    // End JSON object
     *p++ = '}';
     b->last = p;
     b->last_buf = 1;
-    b->last_in_chain = 1;
 
+    // Finalize response
     out.buf = b;
     out.next = NULL;
 
     r->headers_out.status = NGX_HTTP_OK;
     ngx_str_set(&r->headers_out.content_type, "application/json");
-    r->headers_out.content_length_n = p - b->pos;
+    r->headers_out.content_length_n = b->last - b->pos;
 
     ngx_http_send_header(r);
-
     return ngx_http_output_filter(r, &out);
 }
 // Request body handler
 static void
 ngx_http_upstream_mgmt_body_handler(ngx_http_request_t *r)
 {
-    ngx_int_t rc;
-    rc = ngx_http_upstream_mgmt_update(r);
-    
-    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-        ngx_http_finalize_request(r, rc);
-        return;
-    }
-    
-    ngx_http_finalize_request(r, NGX_DONE);
+    ngx_int_t rc = ngx_http_upstream_mgmt_update(r);
+
+    ngx_http_finalize_request(r, rc);
 }
 
 // Main update function
