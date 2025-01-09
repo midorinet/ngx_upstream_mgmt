@@ -220,26 +220,19 @@ jobs:
         config:
           - os: 'ubuntu-2204'
             container: 'ubuntu:22.04'
-            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
           - os: 'ubuntu-2004'
             container: 'ubuntu:20.04'
-            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
           - os: 'debian-bullseye'
             container: 'debian:bullseye'
-            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
           - os: 'debian-bookworm'
             container: 'debian:bookworm'
-            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
           - os: 'fedora-latest'
             container: 'fedora:latest'
-            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
           - os: 'centos-7'
             container: 'quay.io/centos/centos:7'
-            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
             use_composite: true
           - os: 'rocky-8'
             container: 'quay.io/rockylinux/rockylinux:8'
-            version: ${{ fromJson(needs.check-versions.outputs.matrix)[0] }}
             use_composite: true
       fail-fast: false
 
@@ -249,47 +242,34 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    - name: Install build dependencies (Debian/Ubuntu)
-      if: contains(matrix.config.container, 'ubuntu') || contains(matrix.config.container, 'debian')
-      shell: bash
+    - name: Get version from check-versions
+      id: get-version
       run: |
-        set -x  # Enable debug output
-        apt-get update
-        apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev wget file
-        gcc --version
-
-    - name: Install build dependencies (Fedora)
-      if: contains(matrix.config.container, 'fedora')
-      shell: bash
-      run: |
-        set -x  # Enable debug output
-        dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file
-        gcc --version
+        echo "VERSION=$(echo '${{ needs.check-versions.outputs.matrix }}' | jq -r '.[0]')" >> $GITHUB_OUTPUT
 
     - name: Parse version info
       id: parse
       shell: bash
       run: |
         set -x  # Enable debug output
-        version="${{ matrix.config.version }}"
+        version="${{ steps.get-version.outputs.VERSION }}"
         type=$(echo "$version" | cut -d'-' -f1)
         ver=$(echo "$version" | cut -d'-' -f2)
-        # Add debug output
+        # Debug output
         echo "Raw version: $version"
         echo "Parsed type: $type"
         echo "Parsed version: $ver"
-        # Use explicit EOF markers to avoid string interpolation issues
-        cat << 'EOF' >> "$GITHUB_OUTPUT"
-        TYPE=$type
-        VERSION=$ver
-        EOF
+        # Export to GITHUB_OUTPUT
+        {
+          echo "TYPE=$type"
+          echo "VERSION=$ver"
+          echo "BUILD_DIR=${type}-${ver}"
+        } >> "$GITHUB_OUTPUT"
 
     - name: Setup and Build in RHEL-based systems
       if: matrix.config.use_composite
       run: |
-        BUILD_DIR="${{ steps.parse.outputs.TYPE }}-${{ steps.parse.outputs.VERSION }}"
-        echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_ENV"
-        
+        echo "Using build directory: ${{ steps.parse.outputs.BUILD_DIR }}"
         docker run --rm \
           -v ${{ github.workspace }}:/github/workspace \
           -w /github/workspace \
@@ -302,15 +282,21 @@ jobs:
               dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file
             fi
             gcc --version
-            if [ "${{ steps.parse.outputs.TYPE }}" = "nginx" ]; then
-              wget --no-verbose https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
-              tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
-              cd nginx-${{ steps.parse.outputs.VERSION }}
+            
+            TYPE="${{ steps.parse.outputs.TYPE }}"
+            VERSION="${{ steps.parse.outputs.VERSION }}"
+            echo "Building for type: $TYPE version: $VERSION"
+            
+            if [ "$TYPE" = "nginx" ]; then
+              wget --no-verbose "https://nginx.org/download/nginx-${VERSION}.tar.gz"
+              tar -xzf "nginx-${VERSION}.tar.gz"
+              cd "nginx-${VERSION}"
             else
-              wget --no-verbose https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
-              tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
-              cd freenginx-${{ steps.parse.outputs.VERSION }}
+              wget --no-verbose "https://freenginx.org/download/freenginx-${VERSION}.tar.gz"
+              tar -xzf "freenginx-${VERSION}.tar.gz"
+              cd "freenginx-${VERSION}"
             fi
+            
             ./configure --with-compat --add-dynamic-module=../
             make modules
             ls -l objs/*.so
