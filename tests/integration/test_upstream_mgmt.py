@@ -166,7 +166,7 @@ def test_set_server_drain_state(nginx_server):
     data = response.json()
     server_id = data['backend']['servers'][0]['id']
 
-    # Test setting drain to true (should set down=true)
+    # Test setting drain to true
     drain_response = requests.patch(
         f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
         json={'drain': True}
@@ -183,7 +183,7 @@ def test_set_server_drain_state(nginx_server):
         server for server in updated_data['backend']['servers'] 
         if server['id'] == server_id
     )
-    assert updated_server.get('down') is True
+    assert updated_server['down'] is True  # Check down status
 
 def test_unset_server_drain_state(nginx_server):
     """Test unsetting drain state for a specific server"""
@@ -217,7 +217,7 @@ def test_unset_server_drain_state(nginx_server):
         server for server in updated_data['backend']['servers'] 
         if server['id'] == server_id
     )
-    assert updated_server.get('down') is False
+    assert updated_server['down'] is False  # Check down status
 
 def test_drain_nonexistent_server(nginx_server):
     """Test setting drain state for a non-existent server"""
