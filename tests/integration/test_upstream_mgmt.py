@@ -116,8 +116,8 @@ def test_set_server_drain_state(nginx_server):
     payload = {'drain': True}
     drain_response = requests.patch(
         url,
-        data=json.dumps(payload),
-        headers={'Content-Type': 'application/json'}
+        data='{"drain":true}',  # Send raw string like curl -d
+        headers={'Content-Type': 'application/x-www-form-urlencoded'}
     )
     logger.info("PATCH response status: %d", drain_response.status_code)
     logger.info("PATCH response body: %s", drain_response.text)
