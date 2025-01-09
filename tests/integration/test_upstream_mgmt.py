@@ -108,36 +108,38 @@ def test_set_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
     data = response.json()
-    logger.info("Initial server state: %s", json.dumps(data, indent=2))
     server_id = data['backend']['servers'][0]['id']
 
     # Test setting drain to true
     url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}'
-    payload = {'drain': True}
+    payload = '{"drain":true}'
+    
+    # Send request exactly like curl
     drain_response = requests.patch(
         url,
-        data='{"drain":true}',  # Send raw string like curl -d
-        headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        data=payload,
+        headers={
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*',
+            'Content-Length': str(len(payload))
+        }
     )
-    logger.info("PATCH response status: %d", drain_response.status_code)
-    logger.info("PATCH response body: %s", drain_response.text)
     
     if drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
     assert drain_response.status_code == 200
+    
+    # Check success response
+    assert drain_response.json() == {"status": "success"}
 
     # Verify the server state was updated
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
     updated_data = response.json()
-    logger.info("Server state after PATCH: %s", json.dumps(updated_data, indent=2))
-    
     updated_server = next(
         server for server in updated_data['backend']['servers'] 
         if server['id'] == server_id
     )
-    logger.info("Updated server state: %s", json.dumps(updated_server, indent=2))
-    
     assert updated_server['down'] is True
 
 def test_unset_server_drain_state(nginx_server):
@@ -149,20 +151,34 @@ def test_unset_server_drain_state(nginx_server):
     server_id = data['backend']['servers'][0]['id']
 
     # First set drain to true
+    payload = '{"drain":true}'
     set_drain_response = requests.patch(
         f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
-        json={'drain': True}
+        data=payload,
+        headers={
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*',
+            'Content-Length': str(len(payload))
+        }
     )
     if set_drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
     assert set_drain_response.status_code == 200
+    assert set_drain_response.json() == {"status": "success"}
 
     # Then set drain to false
+    payload = '{"drain":false}'
     unset_drain_response = requests.patch(
         f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
-        json={'drain': False}
+        data=payload,
+        headers={
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*',
+            'Content-Length': str(len(payload))
+        }
     )
     assert unset_drain_response.status_code == 200
+    assert unset_drain_response.json() == {"status": "success"}
 
     # Verify the server state was updated
     response = requests.get('http://localhost:8080/upstream_mgmt')
