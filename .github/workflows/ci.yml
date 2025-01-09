@@ -281,31 +281,32 @@ jobs:
 
     - name: Setup and Build in RHEL-based systems
       if: matrix.config.use_composite
-      uses: docker://quay.io/${{ matrix.config.container }}
-      with:
-        args: |
-          bash -c "
-            set -ex;
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}:/github/workspace \
+          -w /github/workspace \
+          ${{ matrix.config.container }} \
+          bash -c '
+            set -ex
             if command -v yum &> /dev/null; then
-              yum install -y gcc make pcre-devel zlib-devel openssl-devel wget file;
+              yum install -y gcc make pcre-devel zlib-devel openssl-devel wget file
             else
-              dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file;
-            fi;
-            gcc --version;
-            cd /github/workspace;
-            if [ '${{ steps.parse.outputs.TYPE }}' = 'nginx' ]; then
-              wget --no-verbose https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz;
-              tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz;
-              cd nginx-${{ steps.parse.outputs.VERSION }};
+              dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file
+            fi
+            gcc --version
+            if [ "${{ steps.parse.outputs.TYPE }}" = "nginx" ]; then
+              wget --no-verbose https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+              tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+              cd nginx-${{ steps.parse.outputs.VERSION }}
             else
-              wget --no-verbose https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz;
-              tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz;
-              cd freenginx-${{ steps.parse.outputs.VERSION }};
-            fi;
-            ./configure --with-compat --add-dynamic-module=../;
-            make modules;
-            ls -l objs/*.so;
-            file objs/*.so;"
+              wget --no-verbose https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+              tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
+              cd freenginx-${{ steps.parse.outputs.VERSION }}
+            fi
+            ./configure --with-compat --add-dynamic-module=../
+            make modules
+            ls -l objs/*.so
+            file objs/*.so'
 
     - name: Download and Extract
       id: download
