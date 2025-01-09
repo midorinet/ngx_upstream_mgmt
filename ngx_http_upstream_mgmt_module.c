@@ -519,8 +519,8 @@ send_response:
     out.buf = b;
     out.next = NULL;
 
-    // Only set 200 if not already set to an error code
-    if (r->headers_out.status == 0) {
+    // Change this part
+    if (r->headers_out.status == 0) {  // Only set 200 if no error status was set
         r->headers_out.status = NGX_HTTP_OK;
     }
     
@@ -530,3 +530,4 @@ send_response:
     ngx_http_send_header(r);
 
     return ngx_http_output_filter(r, &out);
+}
