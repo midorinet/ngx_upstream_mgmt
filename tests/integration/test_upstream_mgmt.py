@@ -164,18 +164,13 @@ def test_set_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
     data = response.json()
-    print("\nInitial GET response:")
-    print(data)
     server_id = data['backend']['servers'][0]['id']
 
-    # Test setting drain to true
+    # Test setting drain to true (should set down=true)
     drain_response = requests.patch(
         f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}',
         json={'drain': True}
     )
-    print("\nPATCH response status code:", drain_response.status_code)
-    print("PATCH response body:", drain_response.text)
-    
     if drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
     assert drain_response.status_code == 200
@@ -184,17 +179,11 @@ def test_set_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
     updated_data = response.json()
-    print("\nGET response after PATCH:")
-    print(updated_data)
-    
     updated_server = next(
         server for server in updated_data['backend']['servers'] 
         if server['id'] == server_id
     )
-    print("\nUpdated server data:")
-    print(updated_server)
-    
-    assert updated_server.get('drain') is True
+    assert updated_server.get('down') is True
 
 def test_unset_server_drain_state(nginx_server):
     """Test unsetting drain state for a specific server"""
@@ -228,7 +217,7 @@ def test_unset_server_drain_state(nginx_server):
         server for server in updated_data['backend']['servers'] 
         if server['id'] == server_id
     )
-    assert updated_server.get('drain') is False
+    assert updated_server.get('down') is False
 
 def test_drain_nonexistent_server(nginx_server):
     """Test setting drain state for a non-existent server"""
@@ -241,7 +230,7 @@ def test_drain_nonexistent_server(nginx_server):
     assert response.status_code == 404
 
 def test_invalid_drain_value(nginx_server):
-    """Test setting invalid drain state value"""
+    """Test setting invalid drain value"""
     # First get a valid server ID
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
