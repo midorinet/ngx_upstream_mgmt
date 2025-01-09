@@ -114,9 +114,11 @@ def test_set_server_drain_state(nginx_server):
     # Test setting drain to true
     url = f'http://localhost:8080/upstream_mgmt/backend/servers/{server_id}'
     payload = {'drain': True}
-    logger.info("Sending PATCH to %s with payload: %s", url, json.dumps(payload))
-    
-    drain_response = requests.patch(url, json=payload)
+    drain_response = requests.patch(
+        url,
+        data=json.dumps(payload),
+        headers={'Content-Type': 'application/json'}
+    )
     logger.info("PATCH response status: %d", drain_response.status_code)
     logger.info("PATCH response body: %s", drain_response.text)
     
@@ -140,6 +142,7 @@ def test_set_server_drain_state(nginx_server):
 
 def test_unset_server_drain_state(nginx_server):
     """Test unsetting drain state for a specific server"""
+    # First get the server ID
     response = requests.get('http://localhost:8080/upstream_mgmt')
     assert response.status_code == 200
     data = response.json()
