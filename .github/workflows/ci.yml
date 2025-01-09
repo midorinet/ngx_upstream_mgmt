@@ -245,7 +245,25 @@ jobs:
     - name: Get version from check-versions
       id: get-version
       run: |
-        echo "VERSION=$(echo '${{ needs.check-versions.outputs.matrix }}' | jq -r '.[0]')" >> $GITHUB_OUTPUT
+        # Debug the matrix output
+        echo "Matrix output: ${{ needs.check-versions.outputs.matrix }}"
+        # Extract first version without jq dependency
+        FIRST_VERSION=$(echo '${{ needs.check-versions.outputs.matrix }}' | sed 's/[][]//g' | cut -d'"' -f2)
+        echo "First version: $FIRST_VERSION"
+        echo "VERSION=$FIRST_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Install basic tools (Debian/Ubuntu)
+      if: contains(matrix.config.container, 'ubuntu') || contains(matrix.config.container, 'debian')
+      shell: bash
+      run: |
+        apt-get update
+        apt-get install -y wget
+
+    - name: Install basic tools (Fedora)
+      if: contains(matrix.config.container, 'fedora')
+      shell: bash
+      run: |
+        dnf install -y wget
 
     - name: Parse version info
       id: parse
@@ -253,13 +271,13 @@ jobs:
       run: |
         set -x  # Enable debug output
         version="${{ steps.get-version.outputs.VERSION }}"
+        echo "Full version string: $version"
         type=$(echo "$version" | cut -d'-' -f1)
         ver=$(echo "$version" | cut -d'-' -f2)
         # Debug output
         echo "Raw version: $version"
         echo "Parsed type: $type"
         echo "Parsed version: $ver"
-        # Export to GITHUB_OUTPUT
         {
           echo "TYPE=$type"
           echo "VERSION=$ver"
@@ -269,19 +287,29 @@ jobs:
     - name: Setup and Build in RHEL-based systems
       if: matrix.config.use_composite
       run: |
-        echo "Using build directory: ${{ steps.parse.outputs.BUILD_DIR }}"
+        echo "Type: ${{ steps.parse.outputs.TYPE }}"
+        echo "Version: ${{ steps.parse.outputs.VERSION }}"
+        echo "Build dir: ${{ steps.parse.outputs.BUILD_DIR }}"
+        
         docker run --rm \
           -v ${{ github.workspace }}:/github/workspace \
           -w /github/workspace \
           ${{ matrix.config.container }} \
           bash -c '
             set -ex
+            
+            # Fix repos for CentOS 7
+            if [ -f /etc/centos-release ]; then
+              sed -i "s/mirrorlist/#mirrorlist/g" /etc/yum.repos.d/CentOS-*
+              sed -i "s|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-*
+            fi
+            
+            # Install dependencies
             if command -v yum &> /dev/null; then
               yum install -y gcc make pcre-devel zlib-devel openssl-devel wget file
             else
               dnf install -y gcc make pcre-devel zlib-devel openssl-devel wget file
             fi
-            gcc --version
             
             TYPE="${{ steps.parse.outputs.TYPE }}"
             VERSION="${{ steps.parse.outputs.VERSION }}"
@@ -303,47 +331,43 @@ jobs:
             file objs/*.so'
 
     - name: Download and Extract
-      id: download
       if: "!matrix.config.use_composite"
       shell: bash
       run: |
         set -x  # Enable debug output
-        if [ "${{ steps.parse.outputs.TYPE }}" = "nginx" ]; then
-          wget --no-verbose https://nginx.org/download/nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
-          tar -xzf nginx-${{ steps.parse.outputs.VERSION }}.tar.gz
-          BUILD_DIR="nginx-${{ steps.parse.outputs.VERSION }}"
+        TYPE="${{ steps.parse.outputs.TYPE }}"
+        VERSION="${{ steps.parse.outputs.VERSION }}"
+        echo "Building for type: $TYPE version: $VERSION"
+        
+        if [ "$TYPE" = "nginx" ]; then
+          wget --no-verbose "https://nginx.org/download/nginx-${VERSION}.tar.gz"
+          tar -xzf "nginx-${VERSION}.tar.gz"
+          BUILD_DIR="nginx-${VERSION}"
         else
-          wget --no-verbose https://freenginx.org/download/freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
-          tar -xzf freenginx-${{ steps.parse.outputs.VERSION }}.tar.gz
-          BUILD_DIR="freenginx-${{ steps.parse.outputs.VERSION }}"
+          wget --no-verbose "https://freenginx.org/download/freenginx-${VERSION}.tar.gz"
+          tar -xzf "freenginx-${VERSION}.tar.gz"
+          BUILD_DIR="freenginx-${VERSION}"
         fi
-        echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_OUTPUT"
-        echo "Directory contents:"
-        ls -la
+        echo "BUILD_DIR=$BUILD_DIR" >> $GITHUB_OUTPUT
 
     - name: Build Module
       if: "!matrix.config.use_composite"
       shell: bash
       run: |
-        set -x  # Enable debug output
         cd "${{ steps.download.outputs.BUILD_DIR }}"
-        echo "Current directory: $(pwd)"
-        echo "Running configure..."
         ./configure --with-compat --add-dynamic-module=../
-        echo "Running make..."
         make modules
-        echo "Build complete. Checking module:"
-        ls -l objs/ngx_http_upstream_mgmt_module.so
-        file objs/ngx_http_upstream_mgmt_module.so
+        ls -l objs/*.so
+        file objs/*.so
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ matrix.config.version }}-${{ matrix.config.os }}-modules
+        name: ${{ matrix.config.os }}-modules
         path: |
-          ${{ github.workspace }}/${{ env.BUILD_DIR }}/objs/*.so
-          ${{ github.workspace }}/${{ env.BUILD_DIR }}/objs/*.a
-        if-no-files-found: warn  # Changed from error to warn for debugging
+          ${{ github.workspace }}/${{ steps.parse.outputs.BUILD_DIR }}/objs/*.so
+          ${{ github.workspace }}/${{ steps.parse.outputs.BUILD_DIR }}/objs/*.a
+        if-no-files-found: warn
     
   security:
     runs-on: ubuntu-latest
