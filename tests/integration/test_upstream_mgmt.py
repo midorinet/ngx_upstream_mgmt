@@ -108,8 +108,14 @@ def test_set_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/api/upstreams/backend')
     assert response.status_code == 200
     data = response.json()
-    print(f"Initial Response Data: {data}")
-    server_id = data['backend']['servers'][0]['id']
+    print(f"GET Response Data: {data}")  # Log the actual response structure
+    
+    # Get servers directly from response
+    servers = data.get('servers', [])  # Changed from data['backend']['servers']
+    if not servers:
+        raise ValueError(f"No servers found in response: {data}")
+        
+    server_id = servers[0]['id']
 
     # Test setting drain to true
     url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
@@ -139,8 +145,10 @@ def test_set_server_drain_state(nginx_server):
     updated_data = response.json()
     print(f"Updated Response Data: {updated_data}")
     
+    # Get servers from updated response
+    updated_servers = updated_data.get('servers', [])
     updated_server = next(
-        server for server in updated_data['backend']['servers'] 
+        server for server in updated_servers
         if server['id'] == server_id
     )
     assert updated_server['down'] is True
@@ -151,7 +159,10 @@ def test_unset_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/api/upstreams/backend')
     assert response.status_code == 200
     data = response.json()
-    server_id = data['backend']['servers'][0]['id']
+    servers = data.get('servers', [])
+    if not servers:
+        raise ValueError(f"No servers found in response: {data}")
+    server_id = servers[0]['id']
 
     # First set drain to true
     url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
@@ -188,8 +199,9 @@ def test_unset_server_drain_state(nginx_server):
     response = requests.get('http://localhost:8080/api/upstreams/backend')
     assert response.status_code == 200
     updated_data = response.json()
+    updated_servers = updated_data.get('servers', [])
     updated_server = next(
-        server for server in updated_data['backend']['servers'] 
+        server for server in updated_servers
         if server['id'] == server_id
     )
     assert updated_server['down'] is False
@@ -214,7 +226,10 @@ def test_invalid_drain_value(nginx_server):
     response = requests.get('http://localhost:8080/api/upstreams/backend')
     assert response.status_code == 200
     data = response.json()
-    server_id = data['backend']['servers'][0]['id']
+    servers = data.get('servers', [])
+    if not servers:
+        raise ValueError(f"No servers found in response: {data}")
+    server_id = servers[0]['id']
 
     # Test with invalid drain value
     response = requests.patch(
