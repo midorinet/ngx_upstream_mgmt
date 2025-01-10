@@ -400,14 +400,14 @@ jobs:
         file objs/*.so
 
     - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.config.os }}-modules
         path: |
           ${{ github.workspace }}/${{ steps.parse.outputs.BUILD_DIR }}/objs/*.so
           ${{ github.workspace }}/${{ steps.parse.outputs.BUILD_DIR }}/objs/*.a
         if-no-files-found: warn
-    
+
   security:
     runs-on: ubuntu-latest
     permissions:
