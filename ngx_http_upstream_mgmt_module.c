@@ -181,31 +181,32 @@ static ngx_int_t
 ngx_http_upstream_mgmt_handler(ngx_http_request_t *r)
 {
     ngx_int_t rc;
-    ngx_str_t upstream_name;
+    ngx_http_core_loc_conf_t *clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+    size_t base_len = clcf->name.len;  // Get the configured location prefix
 
     if (r->method == NGX_HTTP_GET) {
-        // Parse URI to determine if it's a specific upstream request
-        u_char *uri = r->uri.data;
-        size_t prefix_len = ngx_strlen("/api/upstreams/");
-        
-        if (r->uri.len == prefix_len - 1) {  // exact match for /api/upstreams
+        // Check if the URI matches the base location or has a subpath
+        if (r->uri.len == base_len) {  // Exact match for the location itself
             return ngx_http_upstream_mgmt_list(r);
-        } else if (r->uri.len > prefix_len) {  // matches /api/upstreams/something
-            upstream_name.data = uri + prefix_len;
-            upstream_name.len = r->uri.len - prefix_len;
-            
+        } else if (r->uri.len > base_len) {  // Matches a subpath under the location
+            ngx_str_t upstream_name;
+            upstream_name.data = r->uri.data + base_len;
+            upstream_name.len = r->uri.len - base_len;
+
             // Check if this is a server-specific request
             u_char *server_part = ngx_strlchr(upstream_name.data, 
-                                            upstream_name.data + upstream_name.len, 
-                                            '/');
+                                              upstream_name.data + upstream_name.len, 
+                                              '/');
             if (server_part) {
-                // This is a server-specific request, handled by PATCH
+                // This is a server-specific request, which is currently unsupported
                 return NGX_HTTP_NOT_ALLOWED;
             }
-            
+
+            // Handle listing a single upstream
             return ngx_http_upstream_mgmt_list_single(r, &upstream_name);
         }
     } else if (r->method == NGX_HTTP_PATCH) {
+        // Enable request body parsing for PATCH requests
         r->request_body_in_single_buf = 1;
         r->request_body_file_log_level = 0;
 
@@ -216,7 +217,7 @@ ngx_http_upstream_mgmt_handler(ngx_http_request_t *r)
         return NGX_DONE;
     }
 
-    return NGX_HTTP_NOT_ALLOWED;
+    return NGX_HTTP_NOT_ALLOWED;  // Method not allowed
 }
 
 static ngx_int_t
