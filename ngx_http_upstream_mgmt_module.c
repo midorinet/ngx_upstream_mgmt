@@ -88,12 +88,10 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
 
     uscfp = umcf->upstreams.elts;
 
-    // Calculate buffer size for single upstream
-    len = 2;  // {}
-    len += 10;  // "servers":
-    len += 2;  // []
+    len = 2;
+    len += 10;
+    len += 2;
 
-    // Find matching upstream and calculate length
     for (i = 0; i < umcf->upstreams.nelts; i++) {
         if (uscfp[i]->host.len == upstream_name->len &&
             ngx_strncmp(uscfp[i]->host.data, upstream_name->data, upstream_name->len) == 0) {
@@ -104,7 +102,7 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
                     if (j > 0) {
                         len++;  // ,
                     }
-                    len += 200;  // Conservative estimate for server info
+                    len += 200;
                     len += servers[j].name.len;
                 }
             }
@@ -116,13 +114,11 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
         return NGX_HTTP_NOT_FOUND;
     }
 
-    // Allocate buffer
     b = ngx_create_temp_buf(r->pool, len);
     if (b == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    // Write JSON
     p = b->pos;
     p = ngx_sprintf(p, "{\"servers\":[");
 
@@ -181,32 +177,28 @@ static ngx_int_t
 ngx_http_upstream_mgmt_handler(ngx_http_request_t *r)
 {
     ngx_int_t rc;
-    ngx_http_core_loc_conf_t *clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-    size_t base_len = clcf->name.len;  // Get the configured location prefix
+    ngx_str_t upstream_name;
 
     if (r->method == NGX_HTTP_GET) {
-        // Check if the URI matches the base location or has a subpath
-        if (r->uri.len == base_len) {  // Exact match for the location itself
+        u_char *uri = r->uri.data;
+        size_t prefix_len = ngx_strlen("/api/upstreams/");
+        
+        if (r->uri.len == prefix_len - 1) {
             return ngx_http_upstream_mgmt_list(r);
-        } else if (r->uri.len > base_len) {  // Matches a subpath under the location
-            ngx_str_t upstream_name;
-            upstream_name.data = r->uri.data + base_len;
-            upstream_name.len = r->uri.len - base_len;
-
-            // Check if this is a server-specific request
+        } else if (r->uri.len > prefix_len) {
+            upstream_name.data = uri + prefix_len;
+            upstream_name.len = r->uri.len - prefix_len;
+            
             u_char *server_part = ngx_strlchr(upstream_name.data, 
-                                              upstream_name.data + upstream_name.len, 
-                                              '/');
+                                            upstream_name.data + upstream_name.len, 
+                                            '/');
             if (server_part) {
-                // This is a server-specific request, which is currently unsupported
                 return NGX_HTTP_NOT_ALLOWED;
             }
-
-            // Handle listing a single upstream
+            
             return ngx_http_upstream_mgmt_list_single(r, &upstream_name);
         }
     } else if (r->method == NGX_HTTP_PATCH) {
-        // Enable request body parsing for PATCH requests
         r->request_body_in_single_buf = 1;
         r->request_body_file_log_level = 0;
 
@@ -217,7 +209,7 @@ ngx_http_upstream_mgmt_handler(ngx_http_request_t *r)
         return NGX_DONE;
     }
 
-    return NGX_HTTP_NOT_ALLOWED;  // Method not allowed
+    return NGX_HTTP_NOT_ALLOWED;
 }
 
 static ngx_int_t
@@ -239,34 +231,31 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
 
     uscfp = umcf->upstreams.elts;
 
-    // Calculate required buffer size
     len = 2;  // {}
     for (i = 0; i < umcf->upstreams.nelts; i++) {
         if (i > 0) {
-            len++;  // ,
+            len++;
         }
-        len += 3 + uscfp[i]->host.len + 10;  // "name":"", "servers":
-        len += 2;  // []
+        len += 3 + uscfp[i]->host.len + 10;
+        len += 2;
 
         if (uscfp[i]->servers) {
             servers = uscfp[i]->servers->elts;
             for (j = 0; j < uscfp[i]->servers->nelts; j++) {
                 if (j > 0) {
-                    len++;  // ,
+                    len++;
                 }
-                len += 200;  // Conservative estimate for server info
-                len += servers[j].name.len;  // Server address length
+                len += 200;
+                len += servers[j].name.len;
             }
         }
     }
 
-    // Allocate buffer
     b = ngx_create_temp_buf(r->pool, len);
     if (b == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    // Write JSON object
     p = b->pos;
     *p++ = '{';
     
