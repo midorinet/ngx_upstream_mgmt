@@ -38,6 +38,7 @@ jobs:
         from bs4 import BeautifulSoup
         from requests.adapters import HTTPAdapter
         from requests.packages.urllib3.util.retry import Retry
+        import json
 
         def fetch_url(url):
             session = requests.Session()
@@ -103,7 +104,9 @@ jobs:
             if freenginx_versions['mainline']:
                 versions.append(f"freenginx-{freenginx_versions['mainline']}")
 
-            print(f"::set-output name=matrix::{versions}")
+            # Set the output using the new method
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                print(f'matrix={json.dumps(versions)}', file=fh)
 
         if __name__ == "__main__":
             main()
@@ -434,7 +437,7 @@ jobs:
         tar -xzf nginx-${NGINX_VERSION}.tar.gz
 
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@v3
       with:
         languages: cpp
 
@@ -446,7 +449,7 @@ jobs:
         make modules
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@v3
       with:
         category: "/language:cpp"
 

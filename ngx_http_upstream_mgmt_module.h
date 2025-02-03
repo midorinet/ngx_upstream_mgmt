@@ -20,11 +20,12 @@ typedef struct {
 } ngx_http_upstream_mgmt_shm_t;
 
 typedef struct {
-    ngx_str_t   upstream;
-    ngx_str_t   server;
-    ngx_str_t   state;
-    ngx_uint_t  server_id;  // Added this line
+    ngx_str_t  upstream;
+    ngx_uint_t server_id;
+    ngx_str_t  state;
 } ngx_http_upstream_mgmt_request_t;
+
+typedef struct ngx_http_upstream_rr_peer_s ngx_http_upstream_rr_peer_t;
 
 extern ngx_module_t ngx_http_upstream_mgmt_module;
 

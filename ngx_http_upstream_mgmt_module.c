@@ -3,6 +3,7 @@
  * It is not affiliated with, endorsed by, or associated with NGINX or F5, Inc.
  */
 #include "ngx_http_upstream_mgmt_module.h"
+#include <ngx_http_upstream_round_robin.h>
 
 #if (NGX_HTTP_UPSTREAM_CHECK)
 #include <ngx_http_upstream_check_module.h>
@@ -15,7 +16,67 @@ static ngx_int_t ngx_http_upstream_mgmt_update(ngx_http_request_t *r);
 static ngx_int_t ngx_http_upstream_mgmt_list(ngx_http_request_t *r);
 static char *ngx_http_upstream_mgmt(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_name);
-// Module configuration commands
+static ngx_int_t ngx_http_upstream_mgmt_init(ngx_conf_t *cf);
+
+static void
+ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server, 
+                                         ngx_str_t *state,
+                                         ngx_http_upstream_rr_peers_t *peers,
+                                         ngx_uint_t server_id) 
+{
+    ngx_http_upstream_rr_peer_t *peer;
+    ngx_uint_t i;
+
+    // Update server configuration state
+    if (state->len == 2 && ngx_strncmp(state->data, "up", 2) == 0) {
+        server->down = 0;
+        if (peers != NULL) {
+            for (peer = peers->peer, i = 0; peer; peer = peer->next, i++) {
+                if (i == server_id) {
+                    peer->down = 0;
+                    break;
+                }
+            }
+        }
+    } else if (state->len == 5 && ngx_strncmp(state->data, "drain", 5) == 0) {
+        server->down = 1;
+        if (peers != NULL) {
+            for (peer = peers->peer, i = 0; peer; peer = peer->next, i++) {
+                if (i == server_id) {
+                    peer->down = 1;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// Module context
+static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
+    NULL,                               /* preconfiguration */
+    ngx_http_upstream_mgmt_init,        /* postconfiguration */
+    NULL,                               /* create main configuration */
+    NULL,                               /* init main configuration */
+    NULL,                               /* create server configuration */
+    NULL,                               /* merge server configuration */
+    NULL,                               /* create location configuration */
+    NULL                               /* merge location configuration */
+};
+
+/* Add the initialization function */
+static ngx_int_t
+ngx_http_upstream_mgmt_init(ngx_conf_t *cf)
+{
+    ngx_http_upstream_main_conf_t  *umcf;
+    
+    umcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_upstream_module);
+    if (umcf == NULL) {
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
+
 static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
     { 
         ngx_string("upstream_mgmt"),
@@ -27,19 +88,6 @@ static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
     },
     ngx_null_command
 };
-
-// Module context
-static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
-    NULL,                               /* preconfiguration */
-    NULL,                               /* postconfiguration */
-    NULL,                               /* create main configuration */
-    NULL,                               /* init main configuration */
-    NULL,                               /* create server configuration */
-    NULL,                               /* merge server configuration */
-    NULL,                               /* create location configuration */
-    NULL                               /* merge location configuration */
-};
-
 // Module definition
 ngx_module_t ngx_http_upstream_mgmt_module = {
     NGX_MODULE_V1,
@@ -448,7 +496,6 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
 
     // Find the upstream
     for (i = 0; i < umcf->upstreams.nelts; i++) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Checking upstream: %V", &uscfp[i]->host);
         if (uscfp[i]->host.len == req.upstream.len &&
             ngx_strncmp(uscfp[i]->host.data, req.upstream.data, req.upstream.len) == 0) {
 
@@ -464,7 +511,64 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid server ID: %ui for upstream: %V", req.server_id, &uscfp[i]->host);
                 response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
                 response.len = ngx_strlen(response.data);
-                r->headers_out.status = NGX_HTTP_NOT_FOUND;  // Add this line
+                r->headers_out.status = NGX_HTTP_NOT_FOUND;
+                goto send_response;
+            }
+
+            ngx_uint_t available_servers = 0;
+            ngx_uint_t j;
+            servers = srv_array->elts;
+            server = &servers[req.server_id];
+
+            for (j = 0; j < srv_array->nelts; j++) {
+                if (!servers[j].down && !servers[j].backup) {
+                    available_servers++;
+                }
+            }
+
+            if (req.state.len == 5 && // "drain"
+                ngx_strncmp(req.state.data, "drain", 5) == 0 &&
+                available_servers <= 1 && 
+                !servers[req.server_id].down) {
+                
+                response.data = (u_char *) "{\"error\":\"Cannot drain last available server\"}";
+                response.len = ngx_strlen(response.data);
+                r->headers_out.status = NGX_HTTP_BAD_REQUEST;
+                goto send_response;
+            }
+            
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Server[%ui]: address=%V, down=%d",
+                          req.server_id, &server->name, server->down);
+
+            // Get peers for this upstream
+            ngx_http_upstream_rr_peers_t *peers = uscfp[i]->peer.data;
+
+            // Update server state with peer information
+            ngx_http_upstream_mgmt_update_peer_status(server, &req.state, peers, req.server_id);
+
+            response.data = (u_char *) "{\"status\":\"success\"}";
+            response.len = ngx_strlen(response.data);
+            goto send_response;
+        }
+    }
+
+    for (i = 0; i < umcf->upstreams.nelts; i++) {
+        if (uscfp[i]->host.len == req.upstream.len &&
+            ngx_strncmp(uscfp[i]->host.data, req.upstream.data, req.upstream.len) == 0) {
+
+            srv_array = uscfp[i]->servers;
+            if (srv_array == NULL) {
+                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Server array is NULL for upstream: %V", &uscfp[i]->host);
+                response.data = (u_char *) "{\"error\":\"Upstream servers not found\"}";
+                response.len = ngx_strlen(response.data);
+                goto send_response;
+            }
+
+            if (req.server_id >= srv_array->nelts) {
+                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid server ID: %ui for upstream: %V", req.server_id, &uscfp[i]->host);
+                response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
+                response.len = ngx_strlen(response.data);
+                r->headers_out.status = NGX_HTTP_NOT_FOUND;
                 goto send_response;
             }
 
@@ -474,17 +578,11 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Server[%ui]: address=%V, down=%d",
                           req.server_id, &server->name, server->down);
 
-            // Update server state
-            if (req.state.len == 2 && ngx_strncmp(req.state.data, "up", 2) == 0) {
-                server->down = 0;
-            } else if (req.state.len == 5 && ngx_strncmp(req.state.data, "drain", 5) == 0) {
-                server->down = 1;
-            } else {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid state: %V", &req.state);
-                response.data = (u_char *) "{\"error\":\"Invalid state\"}";
-                response.len = ngx_strlen(response.data);
-                goto send_response;
-            }
+            // Get peers for this upstream
+            ngx_http_upstream_rr_peers_t *peers = uscfp[i]->peer.data;
+
+            // Update server state with peer information
+            ngx_http_upstream_mgmt_update_peer_status(server, &req.state, peers, req.server_id);
 
             response.data = (u_char *) "{\"status\":\"success\"}";
             response.len = ngx_strlen(response.data);
