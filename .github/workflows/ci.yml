@@ -38,6 +38,7 @@ jobs:
         from bs4 import BeautifulSoup
         from requests.adapters import HTTPAdapter
         from requests.packages.urllib3.util.retry import Retry
+        import json
 
         def fetch_url(url):
             session = requests.Session()
@@ -86,8 +87,7 @@ jobs:
                 print(f"Error fetching {url}: {e}")
                 return {"stable": None, "mainline": None}
 
-   
-        EOL         soup = BeautifulSoup(response.text, 'html.parser')
+            soup = BeautifulSoup(response.text, 'html.parser')
             return extract_versions(soup, "stable version", "mainline version", "freenginx-")
 
         def main():
@@ -104,11 +104,13 @@ jobs:
             if freenginx_versions['mainline']:
                 versions.append(f"freenginx-{freenginx_versions['mainline']}")
 
+            # Set the output using the new method
             with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
                 print(f'matrix={json.dumps(versions)}', file=fh)
 
         if __name__ == "__main__":
             main()
+        EOL
 
     - name: Get latest versions
       id: get-versions
