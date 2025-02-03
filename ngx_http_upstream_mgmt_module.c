@@ -15,6 +15,10 @@ static ngx_int_t ngx_http_upstream_mgmt_update(ngx_http_request_t *r);
 static ngx_int_t ngx_http_upstream_mgmt_list(ngx_http_request_t *r);
 static char *ngx_http_upstream_mgmt(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_name);
+
+static ngx_int_t ngx_http_upstream_mgmt_init(ngx_conf_t *cf);
+static void ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server, 
+                                                     ngx_str_t *state);
 // Module configuration commands
 static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
     { 
@@ -29,29 +33,6 @@ static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
 };
 
 // Module context
-static ngx_int_t
-ngx_http_upstream_mgmt_init(ngx_conf_t *cf)
-{
-    ngx_http_upstream_main_conf_t  *umcf;
-    ngx_http_upstream_srv_conf_t  **uscfp;
-    ngx_uint_t                      i;
-    
-    umcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_upstream_module);
-    if (umcf == NULL) {
-        return NGX_ERROR;
-    }
-    
-    uscfp = umcf->upstreams.elts;
-    
-    for (i = 0; i < umcf->upstreams.nelts; i++) {
-        if (uscfp[i]->peer.init_upstream == ngx_http_upstream_init_round_robin) {
-            uscfp[i]->peer.init = ngx_http_upstream_init_round_robin_peer;
-        }
-    }
-    
-    return NGX_OK;
-}
-
 static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
     NULL,                               /* preconfiguration */
     ngx_http_upstream_mgmt_init,        /* postconfiguration */
@@ -63,59 +44,28 @@ static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
     NULL                               /* merge location configuration */
 };
 
-static ngx_int_t
-ngx_http_upstream_init_round_robin_peer(ngx_http_request_t *r,
-    ngx_http_upstream_srv_conf_t *us)
+static void
+ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server, 
+                                         ngx_str_t *state) 
 {
-    ngx_http_upstream_rr_peer_data_t   *rrp;
-    ngx_http_upstream_server_t         *server;
-    
-    rrp = r->upstream->peer.data;
-    
-    /* Get the original init function */
-    ngx_http_upstream_init_round_robin_peer_pt original_init;
-    original_init = ngx_http_upstream_init_round_robin_peer;
-    
-    /* Call original init */
-    ngx_int_t rc = original_init(r, us);
-    if (rc != NGX_OK) {
-        return rc;
+    if (state->len == 2 && ngx_strncmp(state->data, "up", 2) == 0) {
+        server->down = 0;
+    } else if (state->len == 5 && ngx_strncmp(state->data, "drain", 5) == 0) {
+        server->down = 1;  // For now, we'll use the down flag for draining
     }
-    
-    /* Store original get peer function */
-    rrp->original_get_peer = rrp->get_peer;
-    /* Replace with our function */
-    rrp->get_peer = ngx_http_upstream_mgmt_get_peer;
-    
-    return NGX_OK;
 }
 
+/* Add the initialization function */
 static ngx_int_t
-ngx_http_upstream_mgmt_get_peer(ngx_peer_connection_t *pc, void *data)
+ngx_http_upstream_mgmt_init(ngx_conf_t *cf)
 {
-    ngx_http_upstream_rr_peer_data_t  *rrp = data;
-    ngx_http_upstream_rr_peer_t       *peer;
-    ngx_http_upstream_server_t        *server;
+    ngx_http_upstream_main_conf_t  *umcf;
     
-    /* Call original get_peer */
-    ngx_int_t rc = rrp->original_get_peer(pc, data);
-    if (rc != NGX_OK) {
-        return rc;
+    umcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_upstream_module);
+    if (umcf == NULL) {
+        return NGX_ERROR;
     }
-    
-    /* Get selected peer */
-    peer = rrp->current;
-    if (peer == NULL) {
-        return NGX_OK;
-    }
-    
-    /* Check if server is draining */
-    server = peer->server;
-    if (server->draining) {
-        /* Try next peer */
-        return NGX_BUSY;
-    }
-    
+
     return NGX_OK;
 }
 // Module definition
@@ -553,16 +503,7 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
                           req.server_id, &server->name, server->down);
 
             // Update server state
-            if (req.state.len == 2 && ngx_strncmp(req.state.data, "up", 2) == 0) {
-                server->down = 0;
-            } else if (req.state.len == 5 && ngx_strncmp(req.state.data, "drain", 5) == 0) {
-                server->down = 1;
-            } else {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid state: %V", &req.state);
-                response.data = (u_char *) "{\"error\":\"Invalid state\"}";
-                response.len = ngx_strlen(response.data);
-                goto send_response;
-            }
+            ngx_http_upstream_mgmt_update_peer_status(server, &req.state);
 
             response.data = (u_char *) "{\"status\":\"success\"}";
             response.len = ngx_strlen(response.data);
