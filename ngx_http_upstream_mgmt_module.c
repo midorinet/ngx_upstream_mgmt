@@ -292,7 +292,6 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
     size_t len;
     u_char *p;
     ngx_uint_t i, j, k;
-    ngx_flag_t found = 0;
     ngx_flag_t is_down;
     ngx_http_upstream_rr_peers_t *peers;
     ngx_http_upstream_rr_peer_t *peer;
