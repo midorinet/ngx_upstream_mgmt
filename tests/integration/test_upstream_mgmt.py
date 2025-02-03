@@ -467,3 +467,44 @@ def test_multiple_drains(nginx_server, backend_servers):
     else:
         # If second drain was prevented, should be 400 Bad Request
         assert response2.status_code == 400, "Expected 400 Bad Request when trying to drain all servers"
+
+def test_backend_status_with_one_down(nginx_server, backend_servers):
+    """Test that API correctly shows status when one backend is down"""
+    # First stop one of the backend servers
+    backend_servers[1].stop()  # Stop the second backend (8082)
+    
+    # Wait a moment for nginx to detect the down state
+    time.sleep(2)
+    
+    # Make some requests to ensure nginx marks the server as down
+    for _ in range(5):
+        try:
+            requests.get('http://localhost:8080/')
+        except:
+            pass
+    
+    # Get the upstream status via API
+    response = requests.get('http://localhost:8080/api/upstreams/backend')
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Verify we have info for both servers
+    assert 'servers' in data
+    assert len(data['servers']) == 2, "Should show both backends even when one is down"
+    
+    # Verify servers status
+    servers_status = {server['server']: server['down'] for server in data['servers']}
+    assert not servers_status['127.0.0.1:8081'], "First backend should be up"
+    assert servers_status['127.0.0.1:8082'], "Second backend should be down"
+    
+    # Verify traffic only goes to the working backend
+    distribution = defaultdict(int)
+    for _ in range(10):
+        response = requests.get('http://localhost:8080/')
+        assert response.status_code == 200
+        upstream = response.headers.get('X-Upstream')
+        distribution[upstream] += 1
+    
+    # Should only see traffic to 8081
+    assert len(distribution) == 1, "Traffic should only go to the working backend"
+    assert '127.0.0.1:8081' in distribution, "Traffic should go to the working backend"
