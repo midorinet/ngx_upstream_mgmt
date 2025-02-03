@@ -16,8 +16,8 @@ static ngx_int_t ngx_http_upstream_mgmt_update(ngx_http_request_t *r);
 static ngx_int_t ngx_http_upstream_mgmt_list(ngx_http_request_t *r);
 static char *ngx_http_upstream_mgmt(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_name);
-
 static ngx_int_t ngx_http_upstream_mgmt_init(ngx_conf_t *cf);
+
 static void
 ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server, 
                                          ngx_str_t *state,
@@ -27,6 +27,7 @@ ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server,
     ngx_http_upstream_rr_peer_t *peer;
     ngx_uint_t i;
 
+    // Update server configuration state
     if (state->len == 2 && ngx_strncmp(state->data, "up", 2) == 0) {
         server->down = 0;
         if (peers != NULL) {
@@ -49,18 +50,6 @@ ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server,
         }
     }
 }
-// Module configuration commands
-static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
-    { 
-        ngx_string("upstream_mgmt"),
-        NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
-        ngx_http_upstream_mgmt,
-        0,
-        0,
-        NULL 
-    },
-    ngx_null_command
-};
 
 // Module context
 static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
@@ -511,7 +500,7 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid server ID: %ui for upstream: %V", req.server_id, &uscfp[i]->host);
                 response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
                 response.len = ngx_strlen(response.data);
-                r->headers_out.status = NGX_HTTP_NOT_FOUND;  // Add this line
+                r->headers_out.status = NGX_HTTP_NOT_FOUND;
                 goto send_response;
             }
 
@@ -521,8 +510,11 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Server[%ui]: address=%V, down=%d",
                           req.server_id, &server->name, server->down);
 
-            // Update server state
-            ngx_http_upstream_mgmt_update_peer_status(server, &req.state);
+            // Get peers for this upstream
+            ngx_http_upstream_rr_peers_t *peers = uscfp[i]->peer.data;
+
+            // Update server state with peer information
+            ngx_http_upstream_mgmt_update_peer_status(server, &req.state, peers, req.server_id);
 
             response.data = (u_char *) "{\"status\":\"success\"}";
             response.len = ngx_strlen(response.data);
