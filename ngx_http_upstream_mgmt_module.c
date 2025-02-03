@@ -129,6 +129,7 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
     ngx_uint_t i, j;
     ngx_flag_t found = 0;
     ngx_http_upstream_rr_peers_t *peers;
+    ngx_http_upstream_rr_peer_t *peer;
 
     umcf = ngx_http_get_module_main_conf(r, ngx_http_upstream_module);
     if (umcf == NULL) {
@@ -173,27 +174,27 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
 
     if (uscfp[i]->servers) {
         servers = uscfp[i]->servers->elts;
-        peers = uscfp[i]->peer.data;  // Get runtime peer data
+        peers = uscfp[i]->peer.data;
         
         for (j = 0; j < uscfp[i]->servers->nelts; j++) {
-            ngx_flag_t is_down = servers[j].down;  // Default to config state
+            if (j > 0) {
+                *p++ = ',';
+            }
             
-            // Check runtime state if peers exist
+            // Check runtime state
+            ngx_flag_t is_down = servers[j].down;  // Start with config state
+            
             if (peers != NULL) {
-                ngx_http_upstream_rr_peer_t *peer = peers->peer;
-                ngx_uint_t k;
-                
-                for (k = 0; peer && k < j; k++) {
+                // Find matching peer
+                peer = peers->peer;
+                for (ngx_uint_t k = 0; peer && k < j; k++) {
                     peer = peer->next;
                 }
                 
                 if (peer) {
-                    is_down = peer->down;  // Use runtime state
+                    // Check both explicit down flag and failed state
+                    is_down = peer->down || peer->fails >= peer->max_fails;
                 }
-            }
-            
-            if (j > 0) {
-                *p++ = ',';
             }
             
             p = ngx_sprintf(p, 
@@ -216,7 +217,7 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
                 servers[j].fail_timeout,
                 servers[j].slow_start,
                 servers[j].backup ? "true" : "false",
-                is_down ? "true" : "false"  // Use the runtime state
+                is_down ? "true" : "false"
             );
         }
     }
@@ -291,6 +292,7 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
     u_char *p;
     ngx_uint_t i, j;
     ngx_http_upstream_rr_peers_t *peers;
+    ngx_http_upstream_rr_peer_t *peer;
 
     umcf = ngx_http_get_module_main_conf(r, ngx_http_upstream_module);
     if (umcf == NULL) {
@@ -335,27 +337,27 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
 
     if (uscfp[i]->servers) {
         servers = uscfp[i]->servers->elts;
-        peers = uscfp[i]->peer.data;  // Get runtime peer data
+        peers = uscfp[i]->peer.data;
         
         for (j = 0; j < uscfp[i]->servers->nelts; j++) {
-            ngx_flag_t is_down = servers[j].down;  // Default to config state
+            if (j > 0) {
+                *p++ = ',';
+            }
             
-            // Check runtime state if peers exist
+            // Check runtime state
+            ngx_flag_t is_down = servers[j].down;  // Start with config state
+            
             if (peers != NULL) {
-                ngx_http_upstream_rr_peer_t *peer = peers->peer;
-                ngx_uint_t k;
-                
-                for (k = 0; peer && k < j; k++) {
+                // Find matching peer
+                peer = peers->peer;
+                for (ngx_uint_t k = 0; peer && k < j; k++) {
                     peer = peer->next;
                 }
                 
                 if (peer) {
-                    is_down = peer->down;  // Use runtime state
+                    // Check both explicit down flag and failed state
+                    is_down = peer->down || peer->fails >= peer->max_fails;
                 }
-            }
-            
-            if (j > 0) {
-                *p++ = ',';
             }
             
             p = ngx_sprintf(p, 
@@ -378,7 +380,7 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
                 servers[j].fail_timeout,
                 servers[j].slow_start,
                 servers[j].backup ? "true" : "false",
-                is_down ? "true" : "false"  // Use the runtime state
+                is_down ? "true" : "false"
             );
         }
     }
