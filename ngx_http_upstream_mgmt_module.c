@@ -74,17 +74,6 @@ static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
     NULL                               /* merge location configuration */
 };
 
-static void
-ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server, 
-                                         ngx_str_t *state) 
-{
-    if (state->len == 2 && ngx_strncmp(state->data, "up", 2) == 0) {
-        server->down = 0;
-    } else if (state->len == 5 && ngx_strncmp(state->data, "drain", 5) == 0) {
-        server->down = 1;  // For now, we'll use the down flag for draining
-    }
-}
-
 /* Add the initialization function */
 static ngx_int_t
 ngx_http_upstream_mgmt_init(ngx_conf_t *cf)
