@@ -29,9 +29,32 @@ static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
 };
 
 // Module context
+static ngx_int_t
+ngx_http_upstream_mgmt_init(ngx_conf_t *cf)
+{
+    ngx_http_upstream_main_conf_t  *umcf;
+    ngx_http_upstream_srv_conf_t  **uscfp;
+    ngx_uint_t                      i;
+    
+    umcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_upstream_module);
+    if (umcf == NULL) {
+        return NGX_ERROR;
+    }
+    
+    uscfp = umcf->upstreams.elts;
+    
+    for (i = 0; i < umcf->upstreams.nelts; i++) {
+        if (uscfp[i]->peer.init_upstream == ngx_http_upstream_init_round_robin) {
+            uscfp[i]->peer.init = ngx_http_upstream_init_round_robin_peer;
+        }
+    }
+    
+    return NGX_OK;
+}
+
 static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
     NULL,                               /* preconfiguration */
-    NULL,                               /* postconfiguration */
+    ngx_http_upstream_mgmt_init,        /* postconfiguration */
     NULL,                               /* create main configuration */
     NULL,                               /* init main configuration */
     NULL,                               /* create server configuration */
@@ -40,6 +63,61 @@ static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
     NULL                               /* merge location configuration */
 };
 
+static ngx_int_t
+ngx_http_upstream_init_round_robin_peer(ngx_http_request_t *r,
+    ngx_http_upstream_srv_conf_t *us)
+{
+    ngx_http_upstream_rr_peer_data_t   *rrp;
+    ngx_http_upstream_server_t         *server;
+    
+    rrp = r->upstream->peer.data;
+    
+    /* Get the original init function */
+    ngx_http_upstream_init_round_robin_peer_pt original_init;
+    original_init = ngx_http_upstream_init_round_robin_peer;
+    
+    /* Call original init */
+    ngx_int_t rc = original_init(r, us);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+    
+    /* Store original get peer function */
+    rrp->original_get_peer = rrp->get_peer;
+    /* Replace with our function */
+    rrp->get_peer = ngx_http_upstream_mgmt_get_peer;
+    
+    return NGX_OK;
+}
+
+static ngx_int_t
+ngx_http_upstream_mgmt_get_peer(ngx_peer_connection_t *pc, void *data)
+{
+    ngx_http_upstream_rr_peer_data_t  *rrp = data;
+    ngx_http_upstream_rr_peer_t       *peer;
+    ngx_http_upstream_server_t        *server;
+    
+    /* Call original get_peer */
+    ngx_int_t rc = rrp->original_get_peer(pc, data);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+    
+    /* Get selected peer */
+    peer = rrp->current;
+    if (peer == NULL) {
+        return NGX_OK;
+    }
+    
+    /* Check if server is draining */
+    server = peer->server;
+    if (server->draining) {
+        /* Try next peer */
+        return NGX_BUSY;
+    }
+    
+    return NGX_OK;
+}
 // Module definition
 ngx_module_t ngx_http_upstream_mgmt_module = {
     NGX_MODULE_V1,

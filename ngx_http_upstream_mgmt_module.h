@@ -26,6 +26,29 @@ typedef struct {
     ngx_uint_t  server_id;  // Added this line
 } ngx_http_upstream_mgmt_request_t;
 
+typedef struct {
+    struct sockaddr                 *sockaddr;
+    socklen_t                        socklen;
+    ngx_str_t                        name;
+    ngx_int_t                        weight;
+    ngx_uint_t                       max_conns;
+    ngx_uint_t                       max_fails;
+    time_t                           fail_timeout;
+    ngx_msec_t                       slow_start;
+    unsigned                         down:1;
+    unsigned                         backup:1;
+    unsigned                         draining:1;  /* Add draining flag */
+} ngx_http_upstream_server_t;
+
+/* Add peer data structure */
+typedef struct {
+    ngx_http_upstream_rr_peer_t     *peer;
+    ngx_http_upstream_rr_peer_t     *current;
+    ngx_http_upstream_rr_peers_t    *peers;
+    ngx_uint_t                       tries;
+    ngx_event_get_peer_pt           original_get_peer;
+} ngx_http_upstream_rr_peer_data_t;
+
 extern ngx_module_t ngx_http_upstream_mgmt_module;
 
 #endif /* _NGX_HTTP_UPSTREAM_MGMT_MODULE_H_INCLUDED_ */
