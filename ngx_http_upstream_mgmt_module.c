@@ -76,6 +76,18 @@ ngx_http_upstream_mgmt_init(ngx_conf_t *cf)
 
     return NGX_OK;
 }
+
+static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
+    { 
+        ngx_string("upstream_mgmt"),
+        NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
+        ngx_http_upstream_mgmt,
+        0,
+        0,
+        NULL 
+    },
+    ngx_null_command
+};
 // Module definition
 ngx_module_t ngx_http_upstream_mgmt_module = {
     NGX_MODULE_V1,
@@ -90,18 +102,6 @@ ngx_module_t ngx_http_upstream_mgmt_module = {
     NULL,                                  /* exit process */
     NULL,                                  /* exit master */
     NGX_MODULE_V1_PADDING
-};
-
-static ngx_command_t ngx_http_upstream_mgmt_commands[] = {
-    { 
-        ngx_string("upstream_mgmt"),
-        NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
-        ngx_http_upstream_mgmt,
-        0,
-        0,
-        NULL 
-    },
-    ngx_null_command
 };
 
 // Handler configuration
