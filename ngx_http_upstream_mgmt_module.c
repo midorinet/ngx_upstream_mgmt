@@ -496,7 +496,6 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
 
     // Find the upstream
     for (i = 0; i < umcf->upstreams.nelts; i++) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Checking upstream: %V", &uscfp[i]->host);
         if (uscfp[i]->host.len == req.upstream.len &&
             ngx_strncmp(uscfp[i]->host.data, req.upstream.data, req.upstream.len) == 0) {
 
@@ -516,9 +515,28 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
                 goto send_response;
             }
 
+            ngx_uint_t available_servers = 0;
+            ngx_uint_t j;
             servers = srv_array->elts;
             server = &servers[req.server_id];
 
+            for (j = 0; j < srv_array->nelts; j++) {
+                if (!servers[j].down && !servers[j].backup) {
+                    available_servers++;
+                }
+            }
+
+            if (req.state.len == 5 && // "drain"
+                ngx_strncmp(req.state.data, "drain", 5) == 0 &&
+                available_servers <= 1 && 
+                !servers[req.server_id].down) {
+                
+                response.data = (u_char *) "{\"error\":\"Cannot drain last available server\"}";
+                response.len = ngx_strlen(response.data);
+                r->headers_out.status = NGX_HTTP_BAD_REQUEST;
+                goto send_response;
+            }
+            
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Server[%ui]: address=%V, down=%d",
                           req.server_id, &server->name, server->down);
 
