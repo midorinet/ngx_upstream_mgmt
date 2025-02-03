@@ -126,8 +126,9 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
     ngx_buf_t *b;
     size_t len;
     u_char *p;
-    ngx_uint_t i, j;
+    ngx_uint_t i, j, k;
     ngx_flag_t found = 0;
+    ngx_flag_t is_down;
     ngx_http_upstream_rr_peers_t *peers;
     ngx_http_upstream_rr_peer_t *peer;
 
@@ -182,12 +183,12 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
             }
             
             // Check runtime state
-            ngx_flag_t is_down = servers[j].down;  // Start with config state
+            is_down = servers[j].down;  // Start with config state
             
             if (peers != NULL) {
                 // Find matching peer
                 peer = peers->peer;
-                for (ngx_uint_t k = 0; peer && k < j; k++) {
+                for (k = 0; peer && k < j; k++) {
                     peer = peer->next;
                 }
                 
@@ -290,7 +291,9 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
     ngx_buf_t *b;
     size_t len;
     u_char *p;
-    ngx_uint_t i, j;
+    ngx_uint_t i, j, k;
+    ngx_flag_t found = 0;
+    ngx_flag_t is_down;
     ngx_http_upstream_rr_peers_t *peers;
     ngx_http_upstream_rr_peer_t *peer;
 
@@ -345,12 +348,12 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
             }
             
             // Check runtime state
-            ngx_flag_t is_down = servers[j].down;  // Start with config state
+            is_down = servers[j].down;  // Start with config state
             
             if (peers != NULL) {
                 // Find matching peer
                 peer = peers->peer;
-                for (ngx_uint_t k = 0; peer && k < j; k++) {
+                for (k = 0; peer && k < j; k++) {
                     peer = peer->next;
                 }
                 
