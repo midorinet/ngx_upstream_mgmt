@@ -434,7 +434,7 @@ jobs:
         tar -xzf nginx-${NGINX_VERSION}.tar.gz
 
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@v3
       with:
         languages: cpp
 
@@ -446,7 +446,7 @@ jobs:
         make modules
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@v3
       with:
         category: "/language:cpp"
 
