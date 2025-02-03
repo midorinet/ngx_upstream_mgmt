@@ -86,7 +86,8 @@ jobs:
                 print(f"Error fetching {url}: {e}")
                 return {"stable": None, "mainline": None}
 
-            soup = BeautifulSoup(response.text, 'html.parser')
+   
+        EOL         soup = BeautifulSoup(response.text, 'html.parser')
             return extract_versions(soup, "stable version", "mainline version", "freenginx-")
 
         def main():
@@ -103,11 +104,11 @@ jobs:
             if freenginx_versions['mainline']:
                 versions.append(f"freenginx-{freenginx_versions['mainline']}")
 
-            print(f"::set-output name=matrix::{versions}")
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                print(f'matrix={json.dumps(versions)}', file=fh)
 
         if __name__ == "__main__":
             main()
-        EOL
 
     - name: Get latest versions
       id: get-versions
