@@ -126,8 +126,11 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
     ngx_buf_t *b;
     size_t len;
     u_char *p;
-    ngx_uint_t i, j;
+    ngx_uint_t i, j, k;
     ngx_flag_t found = 0;
+    ngx_flag_t is_down;
+    ngx_http_upstream_rr_peers_t *peers;
+    ngx_http_upstream_rr_peer_t *peer;
 
     umcf = ngx_http_get_module_main_conf(r, ngx_http_upstream_module);
     if (umcf == NULL) {
@@ -172,9 +175,27 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
 
     if (uscfp[i]->servers) {
         servers = uscfp[i]->servers->elts;
+        peers = uscfp[i]->peer.data;
+        
         for (j = 0; j < uscfp[i]->servers->nelts; j++) {
             if (j > 0) {
                 *p++ = ',';
+            }
+            
+            // Check runtime state
+            is_down = servers[j].down;  // Start with config state
+            
+            if (peers != NULL) {
+                // Find matching peer
+                peer = peers->peer;
+                for (k = 0; peer && k < j; k++) {
+                    peer = peer->next;
+                }
+                
+                if (peer) {
+                    // Check both explicit down flag and failed state
+                    is_down = peer->down || peer->fails >= peer->max_fails;
+                }
             }
             
             p = ngx_sprintf(p, 
@@ -197,7 +218,7 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
                 servers[j].fail_timeout,
                 servers[j].slow_start,
                 servers[j].backup ? "true" : "false",
-                servers[j].down ? "true" : "false"
+                is_down ? "true" : "false"
             );
         }
     }
@@ -270,7 +291,10 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
     ngx_buf_t *b;
     size_t len;
     u_char *p;
-    ngx_uint_t i, j;
+    ngx_uint_t i, j, k;
+    ngx_flag_t is_down;
+    ngx_http_upstream_rr_peers_t *peers;
+    ngx_http_upstream_rr_peer_t *peer;
 
     umcf = ngx_http_get_module_main_conf(r, ngx_http_upstream_module);
     if (umcf == NULL) {
@@ -313,37 +337,55 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
         }
         p = ngx_sprintf(p, "\"%V\":{\"servers\":[", &uscfp[i]->host);
 
-        if (uscfp[i]->servers) {
-            servers = uscfp[i]->servers->elts;
-            for (j = 0; j < uscfp[i]->servers->nelts; j++) {
-                if (j > 0) {
-                    *p++ = ',';
+    if (uscfp[i]->servers) {
+        servers = uscfp[i]->servers->elts;
+        peers = uscfp[i]->peer.data;
+        
+        for (j = 0; j < uscfp[i]->servers->nelts; j++) {
+            if (j > 0) {
+                *p++ = ',';
+            }
+            
+            // Check runtime state
+            is_down = servers[j].down;  // Start with config state
+            
+            if (peers != NULL) {
+                // Find matching peer
+                peer = peers->peer;
+                for (k = 0; peer && k < j; k++) {
+                    peer = peer->next;
                 }
                 
-                p = ngx_sprintf(p, 
-                    "{"
-                    "\"id\":%ui,"
-                    "\"server\":\"%V\","
-                    "\"weight\":%ui,"
-                    "\"max_conns\":%ui,"
-                    "\"max_fails\":%ui,"
-                    "\"fail_timeout\":\"%ui" "s\","
-                    "\"slow_start\":\"%ui" "s\","
-                    "\"backup\":%s,"
-                    "\"down\":%s"
-                    "}",
-                    j,
-                    &servers[j].name,
-                    servers[j].weight,
-                    servers[j].max_conns,
-                    servers[j].max_fails,
-                    servers[j].fail_timeout,
-                    servers[j].slow_start,
-                    servers[j].backup ? "true" : "false",
-                    servers[j].down ? "true" : "false"
-                );
+                if (peer) {
+                    // Check both explicit down flag and failed state
+                    is_down = peer->down || peer->fails >= peer->max_fails;
+                }
             }
+            
+            p = ngx_sprintf(p, 
+                "{"
+                "\"id\":%ui,"
+                "\"server\":\"%V\","
+                "\"weight\":%ui,"
+                "\"max_conns\":%ui,"
+                "\"max_fails\":%ui,"
+                "\"fail_timeout\":\"%ui" "s\","
+                "\"slow_start\":\"%ui" "s\","
+                "\"backup\":%s,"
+                "\"down\":%s"
+                "}",
+                j,
+                &servers[j].name,
+                servers[j].weight,
+                servers[j].max_conns,
+                servers[j].max_fails,
+                servers[j].fail_timeout,
+                servers[j].slow_start,
+                servers[j].backup ? "true" : "false",
+                is_down ? "true" : "false"
+            );
         }
+    }
 
         p = ngx_sprintf(p, "]}");
     }
