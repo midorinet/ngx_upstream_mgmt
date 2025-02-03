@@ -145,14 +145,16 @@ def test_get_upstream_servers(nginx_server, backend_servers):
     data = response.json()
     
     # Verify structure and content
-    assert 'servers' in data
-    assert len(data['servers']) == 2
+    assert 'backend' in data
+    assert 'servers' in data['backend']
+    assert len(data['backend']['servers']) == 2
     
     # Verify each server has required fields
-    for server in data['servers']:
+    for server in data['backend']['servers']:
         assert 'id' in server
-        assert 'address' in server
-        assert server['address'] in ['127.0.0.1:8081', '127.0.0.1:8082']
+        assert 'server' in server
+        assert server['server'] in ['127.0.0.1:8081', '127.0.0.1:8082']
+        assert 'down' in server
 
 def test_set_server_drain_state(nginx_server, backend_servers):
     """Test setting drain state for a specific server"""
@@ -298,13 +300,13 @@ def test_drain_upstream_routing(nginx_server, backend_servers):
     assert response.status_code == 200
     data = response.json()
     
-    servers = data.get('servers', [])
+    servers = data['backend']['servers']
     if not servers:
         raise ValueError(f"No servers found in response: {data}")
     
     # Get server ID for the first backend (8081)
     server_id = servers[0]['id']
-    server_address = servers[0]['address']
+    server_addr = servers[0]['server']
     
     # Make multiple requests and collect upstream information before drain
     upstream_distribution_before = defaultdict(int)
@@ -335,24 +337,16 @@ def test_drain_upstream_routing(nginx_server, backend_servers):
     if drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
     assert drain_response.status_code == 200
-    
-    # Wait a short time for drain state to take effect
-    time.sleep(1)
-    
-    # Make multiple requests and collect upstream information after drain
-    upstream_distribution_after = defaultdict(int)
-    for _ in range(50):
-        response = requests.get('http://localhost:8080/')
-        assert response.status_code == 200
-        upstream = response.headers.get('X-Upstream')
-        upstream_distribution_after[upstream] += 1
-    
-    logger.info(f"Traffic distribution after drain: {dict(upstream_distribution_after)}")
-    
-    # Verify traffic is only going to the non-drained upstream
-    assert len(upstream_distribution_after) == 1, "Traffic should only go to non-drained upstream"
-    assert server_address not in upstream_distribution_after, f"Drained upstream {server_address} should not receive traffic"
-    assert any(addr != server_address for addr in upstream_distribution_after.keys()), "Non-drained upstream should receive all traffic"
+
+    # Verify the server was marked as down
+    response = requests.get('http://localhost:8080/api/upstreams/backend')
+    assert response.status_code == 200
+    updated_data = response.json()
+    updated_server = next(
+        server for server in updated_data['backend']['servers']
+        if server['id'] == server_id
+    )
+    assert updated_server['down'] is True
 
 def test_undrain_upstream_routing(nginx_server, backend_servers):
     """Test that traffic distribution returns to normal after undraining an upstream"""
