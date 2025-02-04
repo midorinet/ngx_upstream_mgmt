@@ -1,0 +1,11 @@
+name: Auto CodiumAI Review
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  codiumai_review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger CodiumAI Review
+        run: echo "CodiumAI review triggered"
