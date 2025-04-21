@@ -227,8 +227,8 @@ jobs:
         config:
           - os: 'ubuntu-2204'
             container: 'ubuntu:22.04'
-          - os: 'ubuntu-2004'
-            container: 'ubuntu:20.04'
+          - os: 'ubuntu-latest'
+            container: 'ubuntu:latest'
           - os: 'debian-bullseye'
             container: 'debian:bullseye'
           - os: 'debian-bookworm'
@@ -243,7 +243,7 @@ jobs:
             use_composite: true
       fail-fast: false
 
-    runs-on: ${{ matrix.config.use_composite && 'ubuntu-20.04' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.config.use_composite && 'ubuntu-22.04' || 'ubuntu-latest' }}
     container: ${{ !matrix.config.use_composite && matrix.config.container || '' }}
 
     steps:
