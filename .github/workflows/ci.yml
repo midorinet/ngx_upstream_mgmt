@@ -235,11 +235,11 @@ jobs:
             container: 'debian:bookworm'
           - os: 'fedora-latest'
             container: 'fedora:latest'
-          - os: 'centos-7'
-            container: 'quay.io/centos/centos:7'
-            use_composite: true
           - os: 'rocky-8'
             container: 'quay.io/rockylinux/rockylinux:8'
+            use_composite: true
+          - os: 'rocky-9'
+            container: 'quay.io/rockylinux/rockylinux:9'
             use_composite: true
       fail-fast: false
 
