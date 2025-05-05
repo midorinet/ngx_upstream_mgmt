@@ -238,9 +238,11 @@ jobs:
           - os: 'rocky-8'
             container: 'quay.io/rockylinux/rockylinux:8'
             use_composite: true
+            extra_repo: 'powertools'
           - os: 'rocky-9'
             container: 'quay.io/rockylinux/rockylinux:9'
             use_composite: true
+            extra_repo: 'crb'
       fail-fast: false
 
     runs-on: ${{ matrix.config.use_composite && 'ubuntu-22.04' || 'ubuntu-latest' }}
