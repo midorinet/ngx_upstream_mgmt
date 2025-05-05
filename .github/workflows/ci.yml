@@ -238,11 +238,9 @@ jobs:
           - os: 'rocky-8'
             container: 'quay.io/rockylinux/rockylinux:8'
             use_composite: true
-            extra_repo: 'powertools'
           - os: 'rocky-9'
             container: 'quay.io/rockylinux/rockylinux:9'
             use_composite: true
-            extra_repo: 'crb'
       fail-fast: false
 
     runs-on: ${{ matrix.config.use_composite && 'ubuntu-22.04' || 'ubuntu-latest' }}
@@ -306,13 +304,15 @@ jobs:
           bash -c '
             set -ex
             
-            # Detect OS and setup repositories
+            # Detect OS and setup repositories for Rocky Linux
             if [ -f /etc/rocky-release ]; then
               dnf install -y dnf-plugins-core
-              dnf config-manager --set-enabled powertools
-            elif [ -f /etc/centos-release ]; then
-              sed -i "s/mirrorlist/#mirrorlist/g" /etc/yum.repos.d/CentOS-*
-              sed -i "s|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-*
+              # Detect Rocky version and enable appropriate repo
+              if grep -q "release 8" /etc/rocky-release; then
+                dnf config-manager --set-enabled powertools
+              elif grep -q "release 9" /etc/rocky-release; then
+                dnf config-manager --set-enabled crb
+              fi
             fi
             
             # Install dependencies based on package manager
