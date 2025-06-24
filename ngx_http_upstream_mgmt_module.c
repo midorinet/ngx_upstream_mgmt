@@ -260,38 +260,54 @@ ngx_http_upstream_mgmt_handler(ngx_http_request_t *r)
     ngx_int_t rc;
     ngx_str_t upstream_name;
 
+    u_char *uri = r->uri.data;
+    size_t prefix_len = ngx_strlen("/api/upstreams/");
+
     if (r->method == NGX_HTTP_GET) {
-        u_char *uri = r->uri.data;
-        size_t prefix_len = ngx_strlen("/api/upstreams/");
-        
+        // GET /api/upstreams or /api/upstreams/{upstream}
         if (r->uri.len == prefix_len - 1) {
             return ngx_http_upstream_mgmt_list(r);
         } else if (r->uri.len > prefix_len) {
             upstream_name.data = uri + prefix_len;
             upstream_name.len = r->uri.len - prefix_len;
-            
             u_char *server_part = ngx_strlchr(upstream_name.data, 
                                             upstream_name.data + upstream_name.len, 
                                             '/');
             if (server_part) {
                 return NGX_HTTP_NOT_ALLOWED;
             }
-            
             return ngx_http_upstream_mgmt_list_single(r, &upstream_name);
         }
     } else if (r->method == NGX_HTTP_PATCH) {
+        // PATCH /api/upstreams/{upstream}/servers/{server_id}
+        // Only allow PATCH if uri matches this pattern
+        u_char *p = uri + prefix_len;
+        u_char *slash = ngx_strlchr(p, uri + r->uri.len, '/');
+        if (!slash) {
+            return NGX_HTTP_NOT_ALLOWED;
+        }
+        // Find "/servers/" after upstream name
+        u_char *servers_part = (u_char *)ngx_strstr((char *)slash, "/servers/");
+        if (!servers_part || servers_part != slash) {
+            return NGX_HTTP_NOT_ALLOWED;
+        }
+        // There must be at least one digit after /servers/
+        u_char *id_start = servers_part + ngx_strlen("/servers/");
+        if (id_start >= uri + r->uri.len || *id_start < '0' || *id_start > '9') {
+            return NGX_HTTP_NOT_ALLOWED;
+        }
+        // Looks good, accept PATCH and process body
         r->request_body_in_single_buf = 1;
         r->request_body_file_log_level = 0;
-
         rc = ngx_http_read_client_request_body(r, ngx_http_upstream_mgmt_body_handler);
         if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
             return rc;
         }
         return NGX_DONE;
     }
-
     return NGX_HTTP_NOT_ALLOWED;
 }
+
 
 static ngx_int_t
 ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
