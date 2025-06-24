@@ -442,50 +442,63 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
     ngx_chain_t out;
     ngx_str_t request_body = ngx_null_string;
 
-    // Extract upstream and server ID from URI
+    // Strictly extract upstream and server ID from URI: /api/upstreams/{upstream}/servers/{server_id}
     u_char *uri = r->uri.data;
-    u_char *upstream_start = (u_char *)ngx_strstr((char *)uri, "/api/upstreams/");
-    if (upstream_start) {
-        upstream_start += ngx_strlen("/api/upstreams/");
-        u_char *server_start = (u_char *)ngx_strstr((char *)upstream_start, "/servers/");
-        if (server_start) {
-            req.upstream.data = upstream_start;
-            req.upstream.len = server_start - upstream_start;
-
-            server_start += ngx_strlen("/servers/");
-            u_char *server_id_end = server_start;
-
-            // Locate numeric server ID
-            while (*server_id_end >= '0' && *server_id_end <= '9') {
-                server_id_end++;
-            }
-
-            if (server_id_end == server_start) {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Server ID not found in URI");
-                response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
-                response.len = ngx_strlen(response.data);
-                goto send_response;
-            }
-
-            req.server_id = ngx_atoi(server_start, server_id_end - server_start);
-            if (req.server_id == (ngx_uint_t)NGX_ERROR) {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid server ID in URI");
-                response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
-                response.len = ngx_strlen(response.data);
-                goto send_response;
-            }
-        } else {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid URI format, missing '/servers/'");
-            response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
-            response.len = ngx_strlen(response.data);
-            goto send_response;
-        }
-    } else {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "URI does not start with '/api/upstreams/'");
+    size_t prefix_len = ngx_strlen("/api/upstreams/");
+    if (r->uri.len < prefix_len + 1) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "PATCH URI too short");
         response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
         response.len = ngx_strlen(response.data);
         goto send_response;
     }
+    u_char *upstream_start = uri + prefix_len;
+    u_char *slash = ngx_strlchr(upstream_start, uri + r->uri.len, '/');
+    if (!slash) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "PATCH URI missing /servers/ part");
+        response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    // Extract upstream name
+    req.upstream.data = upstream_start;
+    req.upstream.len = slash - upstream_start;
+    // Defensive: trim trailing slash (shouldn't be present, but just in case)
+    while (req.upstream.len > 0 && req.upstream.data[req.upstream.len - 1] == '/') {
+        req.upstream.len--;
+    }
+    if (req.upstream.len == 0) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "PATCH URI: empty upstream name");
+        response.data = (u_char *) "{\"error\":\"Invalid upstream name\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    // Confirm /servers/ follows
+    u_char *servers_part = (u_char *)ngx_strstr((char *)slash, "/servers/");
+    if (!servers_part || servers_part != slash) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "PATCH URI missing /servers/ after upstream");
+        response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    u_char *server_id_start = servers_part + ngx_strlen("/servers/");
+    u_char *server_id_end = server_id_start;
+    while (server_id_end < uri + r->uri.len && *server_id_end >= '0' && *server_id_end <= '9') {
+        server_id_end++;
+    }
+    if (server_id_end == server_id_start) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "PATCH URI: server id not found");
+        response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    req.server_id = ngx_atoi(server_id_start, server_id_end - server_id_start);
+    if (req.server_id == (ngx_uint_t)NGX_ERROR) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "PATCH URI: invalid server id");
+        response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "PATCH parsed upstream: '%*s', server_id: %ui", (int)req.upstream.len, req.upstream.data, req.server_id);
 
     // Read request body
     if (r->request_body == NULL || r->request_body->bufs == NULL) {
