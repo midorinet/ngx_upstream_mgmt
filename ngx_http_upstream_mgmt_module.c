@@ -4,6 +4,7 @@
  */
 #include "ngx_http_upstream_mgmt_module.h"
 #include <ngx_http_upstream_round_robin.h>
+#include <ctype.h> // For isalnum
 
 #if (NGX_HTTP_UPSTREAM_CHECK)
 #include <ngx_http_upstream_check_module.h>
@@ -23,7 +24,7 @@ static ngx_flag_t ngx_http_upstream_mgmt_valid_name(ngx_str_t *name) {
     if (!name || name->len == 0 || name->len > 255) return 0;
     for (size_t i = 0; i < name->len; ++i) {
         u_char c = name->data[i];
-        if (!(ngx_isalnum(c) || c == '-' || c == '.')) return 0;
+        if (!(isalnum(c) || c == '-' || c == '.')) return 0;
     }
     return 1;
 }
@@ -60,7 +61,6 @@ ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server,
                                          ngx_uint_t server_id) 
 {
     ngx_http_upstream_rr_peer_t *peer;
-    ngx_uint_t i;
     // Update server configuration state
     if (state->len == 2 && ngx_strncmp(state->data, "up", 2) == 0) {
         server->down = 0;
@@ -169,7 +169,7 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
     ngx_buf_t *b;
     size_t len;
     u_char *p;
-    ngx_uint_t i, j, k;
+    ngx_uint_t i, j;
     ngx_flag_t found = 0;
     ngx_flag_t is_down;
     ngx_http_upstream_rr_peers_t *peers;
@@ -233,7 +233,7 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
             }
             // Escape server name
             u_char escaped[512];
-            ngx_str_t esc = {0, escaped};
+            /* removed unused variable esc */
             esc.len = servers[j].name.len * 2;
             ngx_http_upstream_mgmt_json_escape(escaped, &servers[j].name);
             p = ngx_sprintf(p, 
@@ -318,7 +318,7 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
     ngx_buf_t *b;
     size_t len;
     u_char *p;
-    ngx_uint_t i, j, k;
+    ngx_uint_t i, j;
     ngx_flag_t is_down;
     ngx_http_upstream_rr_peers_t *peers;
     ngx_http_upstream_rr_peer_t *peer;
@@ -376,7 +376,7 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
                     if (peer) is_down = peer->down || peer->fails >= peer->max_fails;
                 }
                 u_char escaped[512];
-                ngx_str_t esc = {0, escaped};
+                /* removed unused variable esc */
                 esc.len = servers[j].name.len * 2;
                 ngx_http_upstream_mgmt_json_escape(escaped, &servers[j].name);
                 p = ngx_sprintf(p, "{\"id\":%ui,\"server\":\"");
