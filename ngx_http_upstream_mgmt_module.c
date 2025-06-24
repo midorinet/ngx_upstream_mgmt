@@ -439,7 +439,7 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
 
     ngx_http_send_header(r);
 
-    return ngx_http_output_filter(r, &out);
+    return ngx_http_output_filter(r, out);
 }
 // Request body handler
 static void
@@ -460,7 +460,7 @@ ngx_http_upstream_mgmt_body_handler(ngx_http_request_t *r)
 static ngx_int_t
 ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
 {
-    ngx_http_upstream_mgmt_req_t req;
+    ngx_http_upstream_mgmt_request_t req;
     ngx_http_upstream_main_conf_t *umcf;
     ngx_http_upstream_srv_conf_t **uscfp;
     ngx_http_upstream_server_t *servers, *server;
@@ -469,7 +469,7 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
     ngx_str_t response = ngx_null_string;
     u_char *p;
 
-    ngx_memzero(&req, sizeof(ngx_http_upstream_mgmt_req_t));
+    ngx_memzero(&req, sizeof(ngx_http_upstream_mgmt_request_t));
 
     u_char *uri_end = r->uri.data + r->uri.len;
     u_char *upstream_start = ngx_strnstr(r->uri.data, "/api/upstreams/", r->uri.len);
@@ -648,5 +648,5 @@ send_response:
     out.buf = b;
     out.next = NULL;
 
-    return ngx_http_output_filter(r, &out);
+    return ngx_http_output_filter(r, out);
 }
