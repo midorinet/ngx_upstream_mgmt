@@ -555,6 +555,11 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
 
     uscfp = umcf->upstreams.elts;
 
+    // Print all upstream names for debugging
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "PATCH request: searching for upstream '%*s' among %ui upstreams", (int)req.upstream.len, req.upstream.data, umcf->upstreams.nelts);
+    for (i = 0; i < umcf->upstreams.nelts; i++) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Available upstream[%ui]: '%V'", i, &uscfp[i]->host);
+    }
     // Find the upstream
     for (i = 0; i < umcf->upstreams.nelts; i++) {
         if (uscfp[i]->host.len == req.upstream.len &&
