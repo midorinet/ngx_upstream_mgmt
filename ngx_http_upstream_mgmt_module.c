@@ -77,15 +77,6 @@ ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server,
     }
 }
 
-                if (i == server_id) {
-                    peer->down = 1;
-                    break;
-                }
-            }
-        }
-    }
-}
-
 // Module context
 static ngx_http_module_t ngx_http_upstream_mgmt_module_ctx = {
     NULL,                               /* preconfiguration */
@@ -233,11 +224,8 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
             }
             // Escape server name
             u_char escaped[512];
-            /* removed unused variable esc */
-            esc.len = servers[j].name.len * 2;
             ngx_http_upstream_mgmt_json_escape(escaped, &servers[j].name);
-            p = ngx_sprintf(p, 
-                "{\"id\":%ui,\"server\":\"");
+            p = ngx_sprintf(p, "{\"id\":%ui,\"server\":\"");
             ngx_memcpy(p, escaped, servers[j].name.len);
             p += servers[j].name.len;
             p = ngx_sprintf(p, "\",\"weight\":%ui,\"max_conns\":%ui,\"max_fails\":%ui,\"fail_timeout\":\"%ui" "s\",\"slow_start\":\"%ui" "s\",\"backup\":%s,\"down\":%s}",
@@ -376,8 +364,6 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
                     if (peer) is_down = peer->down || peer->fails >= peer->max_fails;
                 }
                 u_char escaped[512];
-                /* removed unused variable esc */
-                esc.len = servers[j].name.len * 2;
                 ngx_http_upstream_mgmt_json_escape(escaped, &servers[j].name);
                 p = ngx_sprintf(p, "{\"id\":%ui,\"server\":\"");
                 ngx_memcpy(p, escaped, servers[j].name.len);
