@@ -18,6 +18,41 @@ static char *ngx_http_upstream_mgmt(ngx_conf_t *cf, ngx_command_t *cmd, void *co
 static ngx_int_t ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_name);
 static ngx_int_t ngx_http_upstream_mgmt_init(ngx_conf_t *cf);
 
+// Helper: Validate upstream/server name (alphanumeric, dash, dot, max 255)
+static ngx_flag_t ngx_http_upstream_mgmt_valid_name(ngx_str_t *name) {
+    if (!name || name->len == 0 || name->len > 255) return 0;
+    for (size_t i = 0; i < name->len; ++i) {
+        u_char c = name->data[i];
+        if (!(ngx_isalnum(c) || c == '-' || c == '.')) return 0;
+    }
+    return 1;
+}
+
+// Helper: Lookup peer by index (array-style, faster than walking list)
+static ngx_http_upstream_rr_peer_t *ngx_http_upstream_mgmt_peer_by_index(ngx_http_upstream_rr_peers_t *peers, ngx_uint_t idx) {
+    ngx_http_upstream_rr_peer_t *peer = peers ? peers->peer : NULL;
+    ngx_uint_t i = 0;
+    while (peer && i < idx) { peer = peer->next; i++; }
+    return (i == idx) ? peer : NULL;
+}
+
+// Helper: Escape JSON string (basic, for server names)
+static u_char *ngx_http_upstream_mgmt_json_escape(u_char *dst, ngx_str_t *src) {
+    for (size_t i = 0; i < src->len; ++i) {
+        if (src->data[i] == '"' || src->data[i] == '\\') *dst++ = '\\';
+        *dst++ = src->data[i];
+    }
+    return dst;
+}
+
+// Helper: Add security headers
+static void ngx_http_upstream_mgmt_set_security_headers(ngx_http_request_t *r) {
+    static ngx_str_t nosniff = ngx_string("X-Content-Type-Options");
+    static ngx_str_t value = ngx_string("nosniff");
+    ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
+    if (h) { h->hash = 1; h->key = nosniff; h->value = value; }
+}
+
 static void
 ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server, 
                                          ngx_str_t *state,
@@ -26,22 +61,22 @@ ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server,
 {
     ngx_http_upstream_rr_peer_t *peer;
     ngx_uint_t i;
-
     // Update server configuration state
     if (state->len == 2 && ngx_strncmp(state->data, "up", 2) == 0) {
         server->down = 0;
         if (peers != NULL) {
-            for (peer = peers->peer, i = 0; peer; peer = peer->next, i++) {
-                if (i == server_id) {
-                    peer->down = 0;
-                    break;
-                }
-            }
+            peer = ngx_http_upstream_mgmt_peer_by_index(peers, server_id);
+            if (peer) peer->down = 0;
         }
     } else if (state->len == 5 && ngx_strncmp(state->data, "drain", 5) == 0) {
         server->down = 1;
         if (peers != NULL) {
-            for (peer = peers->peer, i = 0; peer; peer = peer->next, i++) {
+            peer = ngx_http_upstream_mgmt_peer_by_index(peers, server_id);
+            if (peer) peer->down = 1;
+        }
+    }
+}
+
                 if (i == server_id) {
                     peer->down = 1;
                     break;
@@ -119,6 +154,14 @@ ngx_http_upstream_mgmt(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static ngx_int_t
 ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_name)
 {
+    // Validate upstream name
+    if (!ngx_http_upstream_mgmt_valid_name(upstream_name)) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid upstream name");
+        r->headers_out.status = NGX_HTTP_BAD_REQUEST;
+        ngx_http_upstream_mgmt_set_security_headers(r);
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
     ngx_http_upstream_main_conf_t *umcf;
     ngx_http_upstream_srv_conf_t **uscfp;
     ngx_http_upstream_server_t *servers;
@@ -176,42 +219,28 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
     if (uscfp[i]->servers) {
         servers = uscfp[i]->servers->elts;
         peers = uscfp[i]->peer.data;
-        
         for (j = 0; j < uscfp[i]->servers->nelts; j++) {
             if (j > 0) {
                 *p++ = ',';
             }
-            
             // Check runtime state
-            is_down = servers[j].down;  // Start with config state
-            
+            is_down = servers[j].down;
             if (peers != NULL) {
-                // Find matching peer
-                peer = peers->peer;
-                for (k = 0; peer && k < j; k++) {
-                    peer = peer->next;
-                }
-                
+                peer = ngx_http_upstream_mgmt_peer_by_index(peers, j);
                 if (peer) {
-                    // Check both explicit down flag and failed state
                     is_down = peer->down || peer->fails >= peer->max_fails;
                 }
             }
-            
+            // Escape server name
+            u_char escaped[512];
+            ngx_str_t esc = {0, escaped};
+            esc.len = servers[j].name.len * 2;
+            ngx_http_upstream_mgmt_json_escape(escaped, &servers[j].name);
             p = ngx_sprintf(p, 
-                "{"
-                "\"id\":%ui,"
-                "\"server\":\"%V\","
-                "\"weight\":%ui,"
-                "\"max_conns\":%ui,"
-                "\"max_fails\":%ui,"
-                "\"fail_timeout\":\"%ui" "s\","
-                "\"slow_start\":\"%ui" "s\","
-                "\"backup\":%s,"
-                "\"down\":%s"
-                "}",
-                j,
-                &servers[j].name,
+                "{\"id\":%ui,\"server\":\"");
+            ngx_memcpy(p, escaped, servers[j].name.len);
+            p += servers[j].name.len;
+            p = ngx_sprintf(p, "\",\"weight\":%ui,\"max_conns\":%ui,\"max_fails\":%ui,\"fail_timeout\":\"%ui" "s\",\"slow_start\":\"%ui" "s\",\"backup\":%s,\"down\":%s}",
                 servers[j].weight,
                 servers[j].max_conns,
                 servers[j].max_fails,
@@ -222,22 +251,17 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
             );
         }
     }
-
     p = ngx_sprintf(p, "]}");
-    
     b->last = p;
     b->last_buf = 1;
     b->last_in_chain = 1;
-
     out.buf = b;
     out.next = NULL;
-
     r->headers_out.status = NGX_HTTP_OK;
     ngx_str_set(&r->headers_out.content_type, "application/json");
+    ngx_http_upstream_mgmt_set_security_headers(r);
     r->headers_out.content_length_n = p - b->pos;
-
     ngx_http_send_header(r);
-
     return ngx_http_output_filter(r, &out);
 }
 
@@ -284,6 +308,9 @@ ngx_http_upstream_mgmt_handler(ngx_http_request_t *r)
 static ngx_int_t
 ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
 {
+    // Security: set header early
+    ngx_http_upstream_mgmt_set_security_headers(r);
+
     ngx_http_upstream_main_conf_t *umcf;
     ngx_http_upstream_srv_conf_t **uscfp;
     ngx_http_upstream_server_t *servers;
@@ -327,74 +354,51 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
     if (b == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
-
     p = b->pos;
     *p++ = '{';
-    
     for (i = 0; i < umcf->upstreams.nelts; i++) {
         if (i > 0) {
             *p++ = ',';
         }
+        // Validate upstream name before output
+        if (!ngx_http_upstream_mgmt_valid_name(&uscfp[i]->host)) continue;
         p = ngx_sprintf(p, "\"%V\":{\"servers\":[", &uscfp[i]->host);
-
-    if (uscfp[i]->servers) {
-        servers = uscfp[i]->servers->elts;
-        peers = uscfp[i]->peer.data;
-        
-        for (j = 0; j < uscfp[i]->servers->nelts; j++) {
-            if (j > 0) {
-                *p++ = ',';
-            }
-            
-            // Check runtime state
-            is_down = servers[j].down;  // Start with config state
-            
-            if (peers != NULL) {
-                // Find matching peer
-                peer = peers->peer;
-                for (k = 0; peer && k < j; k++) {
-                    peer = peer->next;
+        if (uscfp[i]->servers) {
+            servers = uscfp[i]->servers->elts;
+            peers = uscfp[i]->peer.data;
+            for (j = 0; j < uscfp[i]->servers->nelts; j++) {
+                if (j > 0) {
+                    *p++ = ',';
                 }
-                
-                if (peer) {
-                    // Check both explicit down flag and failed state
-                    is_down = peer->down || peer->fails >= peer->max_fails;
+                is_down = servers[j].down;
+                if (peers != NULL) {
+                    peer = ngx_http_upstream_mgmt_peer_by_index(peers, j);
+                    if (peer) is_down = peer->down || peer->fails >= peer->max_fails;
                 }
+                u_char escaped[512];
+                ngx_str_t esc = {0, escaped};
+                esc.len = servers[j].name.len * 2;
+                ngx_http_upstream_mgmt_json_escape(escaped, &servers[j].name);
+                p = ngx_sprintf(p, "{\"id\":%ui,\"server\":\"");
+                ngx_memcpy(p, escaped, servers[j].name.len);
+                p += servers[j].name.len;
+                p = ngx_sprintf(p, "\",\"weight\":%ui,\"max_conns\":%ui,\"max_fails\":%ui,\"fail_timeout\":\"%ui" "s\",\"slow_start\":\"%ui" "s\",\"backup\":%s,\"down\":%s}",
+                    servers[j].weight,
+                    servers[j].max_conns,
+                    servers[j].max_fails,
+                    servers[j].fail_timeout,
+                    servers[j].slow_start,
+                    servers[j].backup ? "true" : "false",
+                    is_down ? "true" : "false"
+                );
             }
-            
-            p = ngx_sprintf(p, 
-                "{"
-                "\"id\":%ui,"
-                "\"server\":\"%V\","
-                "\"weight\":%ui,"
-                "\"max_conns\":%ui,"
-                "\"max_fails\":%ui,"
-                "\"fail_timeout\":\"%ui" "s\","
-                "\"slow_start\":\"%ui" "s\","
-                "\"backup\":%s,"
-                "\"down\":%s"
-                "}",
-                j,
-                &servers[j].name,
-                servers[j].weight,
-                servers[j].max_conns,
-                servers[j].max_fails,
-                servers[j].fail_timeout,
-                servers[j].slow_start,
-                servers[j].backup ? "true" : "false",
-                is_down ? "true" : "false"
-            );
         }
-    }
-
         p = ngx_sprintf(p, "]}");
     }
-    
     *p++ = '}';
     b->last = p;
     b->last_buf = 1;
     b->last_in_chain = 1;
-
     out.buf = b;
     out.next = NULL;
 
