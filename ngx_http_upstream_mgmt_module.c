@@ -241,7 +241,7 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
 
     ngx_http_send_header(r);
 
-    return ngx_http_output_filter(r, &out);
+    return ngx_http_output_filter(r, out);
 }
 
 // Main request handler
@@ -439,7 +439,7 @@ ngx_http_upstream_mgmt_list(ngx_http_request_t *r)
 
     ngx_http_send_header(r);
 
-    return ngx_http_output_filter(r, &out);
+    return ngx_http_output_filter(r, out);
 }
 // Request body handler
 static void
