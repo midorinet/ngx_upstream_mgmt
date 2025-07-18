@@ -453,7 +453,7 @@ ngx_http_upstream_mgmt_parse_uri(ngx_http_request_t *r, ngx_http_upstream_mgmt_r
     u_char *uri_end = uri + uri_len;
     u_char *server_start = ngx_strlchr(upstream_start, uri_end, '/');
     
-    if (!server_start || (uri_end - server_start) < servers_len ||
+    if (!server_start || (size_t)(uri_end - server_start) < servers_len ||
         ngx_strncmp(server_start, servers_path, servers_len) != 0) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid URI format, missing '/servers/'");
         return NGX_ERROR;
@@ -489,8 +489,8 @@ static ngx_int_t
 ngx_http_upstream_mgmt_parse_body(ngx_http_request_t *r, ngx_http_upstream_mgmt_request_t *req)
 {
     ngx_str_t request_body = ngx_null_string;
-    static const char drain_true[] = "\"drain\":true";
-    static const char drain_false[] = "\"drain\":false";
+    static char drain_true[] = "\"drain\":true";
+    static char drain_false[] = "\"drain\":false";
     
     if (r->request_body == NULL || r->request_body->bufs == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Request body is empty");
@@ -532,10 +532,10 @@ ngx_http_upstream_mgmt_parse_body(ngx_http_request_t *r, ngx_http_upstream_mgmt_
     }
     
     // Parse JSON for drain state - optimized search
-    if (ngx_strnstr(request_body.data, drain_true, request_body.len)) {
+    if (ngx_strnstr(request_body.data, (char *)drain_true, request_body.len)) {
         req->state.data = (u_char *) "drain";
         req->state.len = 5;
-    } else if (ngx_strnstr(request_body.data, drain_false, request_body.len)) {
+    } else if (ngx_strnstr(request_body.data, (char *)drain_false, request_body.len)) {
         req->state.data = (u_char *) "up";
         req->state.len = 2;
     } else {

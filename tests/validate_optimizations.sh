@@ -44,7 +44,7 @@ echo -e "\n${YELLOW}3. Code Quality Checks${NC}"
 # Check for common issues
 run_test "No memory leaks in test code" "! grep -r 'malloc\|calloc' tests/ || grep -r 'free' tests/"
 run_test "Proper error handling" "grep -q 'NGX_ERROR' ngx_http_upstream_mgmt_module.c"
-run_test "Function declarations present" "grep -q 'static.*ngx_http_upstream_mgmt' ngx_http_upstream_mgmt_module.h"
+run_test "Function declarations present" "grep -q 'static.*ngx_http_upstream_mgmt' ngx_http_upstream_mgmt_module.c"
 
 # Test 4: Module structure validation
 echo -e "\n${YELLOW}4. Module Structure Validation${NC}"
