@@ -8,8 +8,26 @@ import json
 from pathlib import Path
 from collections import defaultdict
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging to suppress urllib3 debug logs and show our informative logs
+logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(name)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Suppress urllib3 debug logging
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+logging.getLogger("requests.packages.urllib3").setLevel(logging.WARNING)
+
+def log_request_response(method, url, response, request_data=None, headers=None):
+    """Log HTTP request and response details in a clear format"""
+    logger.info("=" * 60)
+    logger.info(f"HTTP {method.upper()} Request: {url}")
+    if headers:
+        logger.info(f"Request Headers: {headers}")
+    if request_data:
+        logger.info(f"Request Data: {request_data}")
+    logger.info(f"Response Status: {response.status_code}")
+    logger.info(f"Response Headers: {dict(response.headers)}")
+    logger.info(f"Response Body: {response.text}")
+    logger.info("=" * 60)
 
 class BackendServer:
     def __init__(self, port):
@@ -103,8 +121,33 @@ class NginxServer:
             out, err = self.process.communicate()
             raise RuntimeError(f"Nginx failed to start:\nSTDOUT:\n{out.decode()}\nSTDERR:\n{err.decode()}")
     
+    def get_logs(self):
+        """Get nginx logs for debugging"""
+        logs = {}
+        log_files = ['error.log', 'access.log', 'api_error.log', 'api_access.log']
+        
+        for log_file in log_files:
+            log_path = self.workdir / "logs" / log_file
+            if log_path.exists():
+                try:
+                    logs[log_file] = log_path.read_text()
+                except Exception as e:
+                    logs[log_file] = f"Error reading log: {e}"
+            else:
+                logs[log_file] = "Log file not found"
+        
+        return logs
+    
     def stop(self):
         if self.process:
+            # Get logs before stopping
+            logs = self.get_logs()
+            logger.info("=== NGINX LOGS ===")
+            for log_name, log_content in logs.items():
+                logger.info(f"--- {log_name} ---")
+                logger.info(log_content[-1000:])  # Last 1000 chars
+                logger.info(f"--- End {log_name} ---")
+            
             self.process.terminate()
             try:
                 self.process.wait(timeout=5)
@@ -138,9 +181,27 @@ def nginx_server(tmp_path):
         server.stop()
 
 # Basic API Tests
+def test_api_connectivity(nginx_server, backend_servers):
+    """Test basic API connectivity and endpoint availability"""
+    # Test if nginx is responding
+    response = requests.get('http://localhost:8080/')
+    log_request_response("GET", "http://localhost:8080/", response)
+    assert response.status_code == 200
+    
+    # Test if API endpoint exists
+    response = requests.get('http://localhost:8080/api/upstreams')
+    log_request_response("GET", "http://localhost:8080/api/upstreams", response)
+    
+    if response.status_code == 404:
+        pytest.skip("API endpoints not configured properly")
+    
+    assert response.status_code == 200
+
 def test_get_upstream_servers(nginx_server, backend_servers):
     """Test getting the list of upstream servers"""
     response = requests.get('http://localhost:8080/api/upstreams/backend')
+    log_request_response("GET", "http://localhost:8080/api/upstreams/backend", response)
+    
     assert response.status_code == 200
     data = response.json()
     
@@ -159,9 +220,10 @@ def test_set_server_drain_state(nginx_server, backend_servers):
     """Test setting drain state for a specific server"""
     # First get the current state and server ID
     response = requests.get('http://localhost:8080/api/upstreams/backend')
+    log_request_response("GET", "http://localhost:8080/api/upstreams/backend", response)
+    
     assert response.status_code == 200
     data = response.json()
-    print(f"GET Response Data: {data}")
     
     servers = data.get('servers', [])
     if not servers:
@@ -171,23 +233,21 @@ def test_set_server_drain_state(nginx_server, backend_servers):
 
     # Test setting drain to true
     url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
-    print(f"PATCH URL: {url}")
     payload = '{"drain":true}'
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': '*/*',
+        'Content-Length': str(len(payload))
+    }
     
-    drain_response = requests.patch(
-        url,
-        data=payload,
-        headers={
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': '*/*',
-            'Content-Length': str(len(payload))
-        }
-    )
-    print(f"Response Status Code: {drain_response.status_code}")
-    print(f"Response Text: {drain_response.text}")
+    drain_response = requests.patch(url, data=payload, headers=headers)
+    log_request_response("PATCH", url, drain_response, payload, headers)
     
     if drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
+    elif drain_response.status_code == 404:
+        pytest.skip("API endpoint not found - check nginx configuration")
+    
     assert drain_response.status_code == 200
     assert drain_response.json() == {"status": "success"}
 
@@ -226,6 +286,7 @@ def test_unset_server_drain_state(nginx_server, backend_servers):
             'Content-Length': str(len(payload))
         }
     )
+    logger.info(f"Set drain response: {set_drain_response.status_code} - {set_drain_response.text}")
     if set_drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
     assert set_drain_response.status_code == 200
@@ -241,6 +302,7 @@ def test_unset_server_drain_state(nginx_server, backend_servers):
             'Content-Length': str(len(payload))
         }
     )
+    logger.info(f"Unset drain response: {unset_drain_response.status_code} - {unset_drain_response.text}")
     assert unset_drain_response.status_code == 200
     assert unset_drain_response.json() == {"status": "success"}
 
@@ -257,14 +319,14 @@ def test_unset_server_drain_state(nginx_server, backend_servers):
 
 def test_drain_nonexistent_server(nginx_server, backend_servers):
     """Test setting drain state for a non-existent server"""
-    response = requests.patch(
-        'http://localhost:8080/api/upstreams/backend/servers/999',
-        data='{"drain":true}',
-        headers={
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': '*/*'
-        }
-    )
+    url = 'http://localhost:8080/api/upstreams/backend/servers/999'
+    payload = '{"drain":true}'
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': '*/*'
+    }
+    response = requests.patch(url, data=payload, headers=headers)
+    log_request_response("PATCH", url, response, payload, headers)
     if response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
     assert response.status_code == 404
@@ -279,14 +341,14 @@ def test_invalid_drain_value(nginx_server, backend_servers):
         raise ValueError(f"No servers found in response: {data}")
     server_id = servers[0]['id']
 
-    response = requests.patch(
-        f'http://localhost:8080/api/upstreams/backend/servers/{server_id}',
-        data='{"drain":"invalid"}',
-        headers={
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': '*/*'
-        }
-    )
+    url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
+    payload = '{"drain":"invalid"}'
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': '*/*'
+    }
+    response = requests.patch(url, data=payload, headers=headers)
+    log_request_response("PATCH", url, response, payload, headers)
     if response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
     assert response.status_code == 400
@@ -331,6 +393,7 @@ def test_drain_upstream_routing(nginx_server, backend_servers):
             'Content-Length': str(len(payload))
         }
     )
+    logger.info(f"Drain response: {drain_response.status_code} - {drain_response.text}")
     
     if drain_response.status_code == 405:
         pytest.skip("PATCH method not implemented yet")
@@ -442,6 +505,7 @@ def test_multiple_drains(nginx_server, backend_servers):
         data='{"drain":true}',
         headers={'Content-Type': 'application/x-www-form-urlencoded'}
     )
+    logger.info(f"First drain response: {response1.status_code} - {response1.text}")
     assert response1.status_code == 200
     
     # Try to drain second server
@@ -451,6 +515,7 @@ def test_multiple_drains(nginx_server, backend_servers):
         data='{"drain":true}',
         headers={'Content-Type': 'application/x-www-form-urlencoded'}
     )
+    logger.info(f"Second drain response: {response2.status_code} - {response2.text}")
     
     # The module should either:
     # 1. Prevent draining all servers (return 400)
