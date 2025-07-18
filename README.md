@@ -1,4 +1,5 @@
 ![CI](https://github.com/midorinet/ngx_upstream_mgmt/workflows/CI/badge.svg)
+![Quick Test](https://github.com/midorinet/ngx_upstream_mgmt/workflows/Quick%20Test/badge.svg)
 
 # NGINX Upstream Management Module
 A dynamic module for NGINX that provides HTTP API endpoints to manage upstream server states and view upstream configurations.
