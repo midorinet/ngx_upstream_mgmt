@@ -25,7 +25,22 @@ typedef struct {
     ngx_str_t  state;
 } ngx_http_upstream_mgmt_request_t;
 
+typedef struct {
+    ngx_http_upstream_srv_conf_t  *uscf;
+    ngx_http_upstream_server_t    *servers;
+    ngx_http_upstream_rr_peers_t  *peers;
+    ngx_uint_t                     nservers;
+} ngx_http_upstream_mgmt_ctx_t;
+
 typedef struct ngx_http_upstream_rr_peer_s ngx_http_upstream_rr_peer_t;
+
+/* Function prototypes */
+static ngx_http_upstream_rr_peer_t *ngx_http_upstream_mgmt_get_peer(
+    ngx_http_upstream_rr_peers_t *peers, ngx_uint_t index);
+static size_t ngx_http_upstream_mgmt_calc_json_size(
+    ngx_http_upstream_mgmt_ctx_t *ctx);
+static u_char *ngx_http_upstream_mgmt_write_server_json(u_char *p,
+    ngx_http_upstream_server_t *server, ngx_uint_t id, ngx_flag_t is_down);
 
 extern ngx_module_t ngx_http_upstream_mgmt_module;
 
