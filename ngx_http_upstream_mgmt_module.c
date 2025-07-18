@@ -37,6 +37,7 @@ static ngx_int_t ngx_http_upstream_mgmt_validate_drain_request(
     ngx_uint_t server_id, ngx_str_t *state);
 static ngx_int_t ngx_http_upstream_mgmt_validate_input(ngx_http_request_t *r);
 static ngx_int_t ngx_http_upstream_mgmt_sanitize_string(ngx_str_t *str, size_t max_len);
+static ngx_int_t ngx_http_upstream_mgmt_validate_context(ngx_http_upstream_mgmt_ctx_t *ctx);
 
 /* Helper function implementations */
 static ngx_http_upstream_rr_peer_t *
@@ -45,15 +46,28 @@ ngx_http_upstream_mgmt_get_peer(ngx_http_upstream_rr_peers_t *peers, ngx_uint_t 
     ngx_http_upstream_rr_peer_t *peer;
     ngx_uint_t i;
 
-    if (peers == NULL) {
+    if (peers == NULL || peers->peer == NULL) {
+        return NULL;
+    }
+    
+    /* Validate index to prevent excessive iteration */
+    if (index > 1000) { /* Reasonable upper limit */
         return NULL;
     }
 
     for (peer = peers->peer, i = 0; peer && i < index; peer = peer->next, i++) {
-        /* continue */
+        /* Safety check to prevent infinite loops */
+        if (i > 1000) {
+            return NULL;
+        }
+        
+        /* Validate peer structure */
+        if (peer->next == peer) { /* Detect circular reference */
+            return NULL;
+        }
     }
 
-    return (i == index) ? peer : NULL;
+    return (i == index && peer != NULL) ? peer : NULL;
 }
 
 static size_t
@@ -61,13 +75,24 @@ ngx_http_upstream_mgmt_calc_json_size(ngx_http_upstream_mgmt_ctx_t *ctx)
 {
     size_t len = 64; /* Base JSON structure with safety margin */
     ngx_uint_t i;
-    size_t server_name_len;
+    size_t server_name_len, entry_size;
+    size_t max_safe_size = NGX_HTTP_UPSTREAM_MGMT_MAX_JSON_SIZE - NGX_HTTP_UPSTREAM_MGMT_SAFETY_MARGIN;
 
     if (ctx == NULL || ctx->servers == NULL) {
         return 64;
     }
 
+    /* Validate server count to prevent excessive iterations */
+    if (ctx->nservers > 1000) { /* Reasonable upper limit */
+        return NGX_HTTP_UPSTREAM_MGMT_MAX_JSON_SIZE;
+    }
+
     for (i = 0; i < ctx->nservers; i++) {
+        /* Validate server structure */
+        if (ctx->servers[i].name.data == NULL) {
+            continue;
+        }
+        
         /* Calculate actual size needed for each server entry */
         server_name_len = ctx->servers[i].name.len;
         
@@ -76,16 +101,22 @@ ngx_http_upstream_mgmt_calc_json_size(ngx_http_upstream_mgmt_ctx_t *ctx)
             server_name_len = NGX_HTTP_UPSTREAM_MGMT_MAX_SERVER_NAME;
         }
         
-        /* Add fixed JSON structure size + variable server name + safety margin */
-        len += NGX_HTTP_UPSTREAM_MGMT_SERVER_JSON_SIZE + server_name_len + 32;
+        /* Calculate entry size with overflow protection */
+        entry_size = NGX_HTTP_UPSTREAM_MGMT_SERVER_JSON_SIZE + server_name_len + 32;
         
-        /* Check for potential overflow */
-        if (len > NGX_HTTP_UPSTREAM_MGMT_MAX_JSON_SIZE - NGX_HTTP_UPSTREAM_MGMT_SAFETY_MARGIN) {
+        /* Check for potential overflow before addition */
+        if (len > max_safe_size || entry_size > max_safe_size - len) {
             return NGX_HTTP_UPSTREAM_MGMT_MAX_JSON_SIZE;
         }
+        
+        len += entry_size;
     }
 
-    /* Add safety margin */
+    /* Add safety margin with overflow check */
+    if (len > max_safe_size - NGX_HTTP_UPSTREAM_MGMT_SAFETY_MARGIN) {
+        return NGX_HTTP_UPSTREAM_MGMT_MAX_JSON_SIZE;
+    }
+    
     len += NGX_HTTP_UPSTREAM_MGMT_SAFETY_MARGIN;
     
     return ngx_min(len, NGX_HTTP_UPSTREAM_MGMT_MAX_JSON_SIZE);
@@ -193,6 +224,7 @@ ngx_http_upstream_mgmt_parse_uri(ngx_http_request_t *r, ngx_str_t *upstream_name
     u_char *uri, *uri_end, *upstream_start, *server_start, *server_id_end;
     size_t prefix_len = sizeof("/api/upstreams/") - 1;
     size_t upstream_len, server_id_len;
+    ngx_uint_t i;
 
     /* Validate input parameters */
     if (r == NULL || upstream_name == NULL || server_id == NULL) {
@@ -200,12 +232,23 @@ ngx_http_upstream_mgmt_parse_uri(ngx_http_request_t *r, ngx_str_t *upstream_name
     }
 
     /* Validate URI length and structure */
-    if (r->uri.len <= prefix_len || r->uri.data == NULL) {
+    if (r->uri.len <= prefix_len || r->uri.len > 2048 || r->uri.data == NULL) {
         return NGX_ERROR;
     }
 
     uri = r->uri.data;
     uri_end = uri + r->uri.len;
+    
+    /* Validate URI contains only safe characters */
+    for (i = 0; i < r->uri.len; i++) {
+        u_char c = uri[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+              (c >= '0' && c <= '9') || c == '/' || c == '-' || 
+              c == '_' || c == '.' || c == '?' || c == '=')) {
+            return NGX_ERROR;
+        }
+    }
+    
     upstream_start = uri + prefix_len;
 
     /* Ensure upstream_start is within bounds */
@@ -216,8 +259,35 @@ ngx_http_upstream_mgmt_parse_uri(ngx_http_request_t *r, ngx_str_t *upstream_name
     /* Look for "/servers/" pattern with bounds checking */
     server_start = NULL;
     u_char *search_pos = upstream_start;
-    while (search_pos < uri_end - sizeof("/servers/") + 1) {
-        if (ngx_strncmp(search_pos, "/servers/", sizeof("/servers/") - 1) == 0) {
+    size_t servers_pattern_len = sizeof("/servers/") - 1;
+    
+    /* Ensure we have enough space for the pattern */
+    if (uri_end - search_pos < (ssize_t)servers_pattern_len) {
+        /* No "/servers/" pattern possible, treat as single upstream request */
+        upstream_len = uri_end - upstream_start;
+        
+        /* Validate upstream name length and content */
+        if (upstream_len == 0 || upstream_len > NGX_HTTP_UPSTREAM_MGMT_MAX_UPSTREAM_NAME) {
+            return NGX_ERROR;
+        }
+        
+        /* Additional validation for upstream name characters */
+        for (i = 0; i < upstream_len; i++) {
+            u_char c = upstream_start[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+                  (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.')) {
+                return NGX_ERROR;
+            }
+        }
+        
+        upstream_name->data = upstream_start;
+        upstream_name->len = upstream_len;
+        *server_id = NGX_CONF_UNSET_UINT;
+        return NGX_OK;
+    }
+    
+    while (search_pos <= uri_end - servers_pattern_len) {
+        if (ngx_strncmp(search_pos, "/servers/", servers_pattern_len) == 0) {
             server_start = search_pos;
             break;
         }
@@ -228,9 +298,18 @@ ngx_http_upstream_mgmt_parse_uri(ngx_http_request_t *r, ngx_str_t *upstream_name
         /* Single upstream request */
         upstream_len = uri_end - upstream_start;
         
-        /* Validate upstream name length */
+        /* Validate upstream name length and content */
         if (upstream_len == 0 || upstream_len > NGX_HTTP_UPSTREAM_MGMT_MAX_UPSTREAM_NAME) {
             return NGX_ERROR;
+        }
+        
+        /* Additional validation for upstream name characters */
+        for (i = 0; i < upstream_len; i++) {
+            u_char c = upstream_start[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+                  (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.')) {
+                return NGX_ERROR;
+            }
         }
         
         upstream_name->data = upstream_start;
@@ -245,11 +324,20 @@ ngx_http_upstream_mgmt_parse_uri(ngx_http_request_t *r, ngx_str_t *upstream_name
         return NGX_ERROR;
     }
     
+    /* Validate upstream name characters */
+    for (i = 0; i < upstream_len; i++) {
+        u_char c = upstream_start[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+              (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.')) {
+            return NGX_ERROR;
+        }
+    }
+    
     upstream_name->data = upstream_start;
     upstream_name->len = upstream_len;
 
     /* Parse server ID with strict bounds checking */
-    server_start += sizeof("/servers/") - 1;
+    server_start += servers_pattern_len;
     
     /* Ensure server_start is within bounds */
     if (server_start >= uri_end) {
@@ -275,8 +363,13 @@ ngx_http_upstream_mgmt_parse_uri(ngx_http_request_t *r, ngx_str_t *upstream_name
         return NGX_ERROR;
     }
 
+    /* Additional validation: ensure server ID is not too large */
     *server_id = ngx_atoi(server_start, server_id_len);
-    return (*server_id == (ngx_uint_t)NGX_ERROR) ? NGX_ERROR : NGX_OK;
+    if (*server_id == (ngx_uint_t)NGX_ERROR || *server_id > 65535) { /* Reasonable upper limit */
+        return NGX_ERROR;
+    }
+    
+    return NGX_OK;
 }
 
 static ngx_int_t
@@ -409,27 +502,98 @@ ngx_http_upstream_mgmt_sanitize_string(ngx_str_t *str, size_t max_len)
     return NGX_OK;
 }
 
+static ngx_int_t
+ngx_http_upstream_mgmt_validate_context(ngx_http_upstream_mgmt_ctx_t *ctx)
+{
+    ngx_uint_t i;
+    
+    if (ctx == NULL) {
+        return NGX_ERROR;
+    }
+    
+    /* Validate upstream configuration */
+    if (ctx->uscf == NULL) {
+        return NGX_ERROR;
+    }
+    
+    /* Validate server count */
+    if (ctx->nservers > 1000) { /* Reasonable upper limit */
+        return NGX_ERROR;
+    }
+    
+    /* Validate servers array if present */
+    if (ctx->nservers > 0) {
+        if (ctx->servers == NULL) {
+            return NGX_ERROR;
+        }
+        
+        /* Basic validation of server entries */
+        for (i = 0; i < ctx->nservers; i++) {
+            if (ctx->servers[i].name.data == NULL || ctx->servers[i].name.len == 0) {
+                return NGX_ERROR;
+            }
+            
+            /* Validate server name length */
+            if (ctx->servers[i].name.len > NGX_HTTP_UPSTREAM_MGMT_MAX_SERVER_NAME) {
+                return NGX_ERROR;
+            }
+        }
+    }
+    
+    return NGX_OK;
+}
+
 static void
 ngx_http_upstream_mgmt_update_peer_status(ngx_http_upstream_server_t *server, 
     ngx_str_t *state, ngx_http_upstream_rr_peers_t *peers, ngx_uint_t server_id) 
 {
     ngx_http_upstream_rr_peer_t *peer;
     ngx_flag_t is_up;
+    ngx_flag_t new_down_state;
     
     /* Validate inputs */
     if (server == NULL || state == NULL) {
         return;
     }
     
+    /* Validate state string */
+    if (state->data == NULL || (state->len != 2 && state->len != 5)) {
+        return;
+    }
+    
     is_up = (state->len == 2 && ngx_strncmp(state->data, "up", 2) == 0);
+    new_down_state = is_up ? 0 : 1;
 
-    /* Update server configuration state */
-    server->down = is_up ? 0 : 1;
+    /* Update server configuration state atomically */
+    server->down = new_down_state;
 
-    /* Update runtime peer state */
-    peer = ngx_http_upstream_mgmt_get_peer(peers, server_id);
-    if (peer != NULL) {
-        peer->down = server->down;
+    /* Update runtime peer state with synchronization */
+    if (peers != NULL) {
+        /* Use nginx's built-in peer locking mechanism if available */
+#if (NGX_HTTP_UPSTREAM_ZONE)
+        if (peers->shpool) {
+            ngx_shmtx_lock(&peers->shpool->mutex);
+        }
+#endif
+        
+        peer = ngx_http_upstream_mgmt_get_peer(peers, server_id);
+        if (peer != NULL) {
+            /* Atomic update of peer state */
+            peer->down = new_down_state;
+            
+            /* Reset failure count when bringing server back up */
+            if (is_up) {
+                peer->fails = 0;
+                peer->accessed = ngx_time();
+                peer->checked = ngx_time();
+            }
+        }
+        
+#if (NGX_HTTP_UPSTREAM_ZONE)
+        if (peers->shpool) {
+            ngx_shmtx_unlock(&peers->shpool->mutex);
+        }
+#endif
     }
 }
 
@@ -509,7 +673,8 @@ ngx_http_upstream_mgmt_build_servers_json(ngx_http_request_t *r,
     ngx_flag_t is_down;
     ngx_http_upstream_rr_peer_t *peer;
 
-    if (ctx == NULL) {
+    /* Validate context */
+    if (ngx_http_upstream_mgmt_validate_context(ctx) != NGX_OK) {
         return NGX_ERROR;
     }
 
