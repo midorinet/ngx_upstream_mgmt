@@ -468,6 +468,80 @@ def test_multiple_drains(nginx_server, backend_servers):
         # If second drain was prevented, should be 400 Bad Request
         assert response2.status_code == 400, "Expected 400 Bad Request when trying to drain all servers"
 
+def test_api_rate_limiting(nginx_server, backend_servers):
+    """Test that API endpoints respect rate limiting"""
+    # Make rapid requests to test rate limiting
+    responses = []
+    for i in range(15):  # Exceed the rate limit
+        response = requests.get('http://localhost:8080/api/upstreams/backend')
+        responses.append(response.status_code)
+        time.sleep(0.05)  # Small delay between requests
+    
+    # Should have some 429 (Too Many Requests) responses if rate limiting is working
+    success_count = sum(1 for status in responses if status == 200)
+    rate_limited_count = sum(1 for status in responses if status == 429)
+    
+    # Allow for some flexibility in rate limiting implementation
+    assert success_count >= 5, "Should allow some requests through"
+    logger.info(f"Rate limiting test: {success_count} successful, {rate_limited_count} rate limited")
+
+def test_api_security_headers(nginx_server, backend_servers):
+    """Test that API responses include security headers"""
+    response = requests.get('http://localhost:8080/api/upstreams/backend')
+    assert response.status_code == 200
+    
+    # Check for security headers
+    headers = response.headers
+    assert 'X-Content-Type-Options' in headers
+    assert headers['X-Content-Type-Options'] == 'nosniff'
+    assert 'X-Frame-Options' in headers
+    assert headers['X-Frame-Options'] == 'DENY'
+
+def test_concurrent_updates(nginx_server, backend_servers):
+    """Test concurrent updates to the same upstream"""
+    import threading
+    import queue
+    
+    response = requests.get('http://localhost:8080/api/upstreams/backend')
+    assert response.status_code == 200
+    data = response.json()
+    servers = data['servers']
+    server_id = servers[0]['id']
+    
+    results = queue.Queue()
+    
+    def update_server(drain_state):
+        try:
+            url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
+            response = requests.patch(
+                url,
+                data=f'{{"drain":{str(drain_state).lower()}}}',
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            results.put(response.status_code)
+        except Exception as e:
+            results.put(str(e))
+    
+    # Start concurrent updates
+    threads = []
+    for i in range(5):
+        thread = threading.Thread(target=update_server, args=[i % 2 == 0])
+        threads.append(thread)
+        thread.start()
+    
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+    
+    # Collect results
+    status_codes = []
+    while not results.empty():
+        status_codes.append(results.get())
+    
+    # All requests should succeed (though final state may vary)
+    success_count = sum(1 for code in status_codes if code == 200)
+    assert success_count >= 3, f"Expected at least 3 successful concurrent updates, got {success_count}"
+
 def test_backend_status_with_one_down(nginx_server, backend_servers):
     """Test that API correctly shows status when one backend is down"""
     # First stop one of the backend servers

@@ -23,7 +23,15 @@ typedef struct {
     ngx_str_t  upstream;
     ngx_uint_t server_id;
     ngx_str_t  state;
+    ngx_msec_t timestamp;
 } ngx_http_upstream_mgmt_request_t;
+
+typedef struct {
+    ngx_uint_t total_requests;
+    ngx_uint_t successful_updates;
+    ngx_uint_t failed_updates;
+    ngx_msec_t last_update;
+} ngx_http_upstream_mgmt_stats_t;
 
 typedef struct ngx_http_upstream_rr_peer_s ngx_http_upstream_rr_peer_t;
 

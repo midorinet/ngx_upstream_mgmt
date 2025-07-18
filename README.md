@@ -179,24 +179,56 @@ Update the state of a specific server in an upstream group.
 }
 ```
 ### Usage Examples
-  - List all upstreams:
-```
+
+#### List all upstreams:
+```bash
 curl http://localhost/api/upstreams
 ```
-  - Get specific upstream details:
-```
+
+#### Get specific upstream details:
+```bash
 curl http://localhost/api/upstreams/backend
 ```
-  - Drain a server (mark as down):
-```
+
+#### Drain a server (mark as down):
+```bash
 curl -X PATCH \
+     -H "Content-Type: application/json" \
      -d '{"drain":true}' \
      http://localhost/api/upstreams/backend/servers/1
 ```
-  - Bring a server back up:
-```
+
+#### Bring a server back up:
+```bash
 curl -X PATCH \
+     -H "Content-Type: application/json" \
      -d '{"drain":false}' \
      http://localhost/api/upstreams/backend/servers/1
 ```
+
+#### Health check with monitoring:
+```bash
+# Check upstream status
+curl -s http://localhost/api/upstreams/backend | jq '.servers[] | select(.down == true)'
+
+# Monitor upstream changes
+watch -n 5 'curl -s http://localhost/api/upstreams/backend | jq ".servers[] | {id, server, down}"'
+```
+
+### Performance Considerations
+
+- API responses are cached for optimal performance
+- JSON parsing is optimized for minimal memory allocation
+- Buffer sizes are calculated dynamically to prevent waste
+- Input validation prevents resource exhaustion attacks
+
+### Security Best Practices
+
+1. **Access Control**: Always restrict API access
+2. **Rate Limiting**: Implement rate limiting for API endpoints
+3. **HTTPS**: Use HTTPS in production
+4. **Monitoring**: Monitor API usage and upstream changes
+5. **Validation**: The module includes comprehensive input validation
+
+See [SECURITY.md](SECURITY.md) for detailed security guidelines.
 

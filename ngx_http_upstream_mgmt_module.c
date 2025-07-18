@@ -120,14 +120,13 @@ static ngx_int_t
 ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_name)
 {
     ngx_http_upstream_main_conf_t *umcf;
-    ngx_http_upstream_srv_conf_t **uscfp;
+    ngx_http_upstream_srv_conf_t **uscfp, *uscf = NULL;
     ngx_http_upstream_server_t *servers;
     ngx_chain_t out;
     ngx_buf_t *b;
     size_t len;
     u_char *p;
     ngx_uint_t i, j, k;
-    ngx_flag_t found = 0;
     ngx_flag_t is_down;
     ngx_http_upstream_rr_peers_t *peers;
     ngx_http_upstream_rr_peer_t *peer;
@@ -139,30 +138,27 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
 
     uscfp = umcf->upstreams.elts;
 
-    len = 2;
-    len += 10;
-    len += 2;
-
+    // Find upstream configuration more efficiently
     for (i = 0; i < umcf->upstreams.nelts; i++) {
         if (uscfp[i]->host.len == upstream_name->len &&
             ngx_strncmp(uscfp[i]->host.data, upstream_name->data, upstream_name->len) == 0) {
-            found = 1;
-            if (uscfp[i]->servers) {
-                servers = uscfp[i]->servers->elts;
-                for (j = 0; j < uscfp[i]->servers->nelts; j++) {
-                    if (j > 0) {
-                        len++;  // ,
-                    }
-                    len += 200;
-                    len += servers[j].name.len;
-                }
-            }
+            uscf = uscfp[i];
             break;
         }
     }
 
-    if (!found) {
+    if (uscf == NULL) {
         return NGX_HTTP_NOT_FOUND;
+    }
+
+    // Calculate buffer size more accurately
+    len = sizeof("{\"servers\":[]}") - 1;
+    if (uscf->servers) {
+        servers = uscf->servers->elts;
+        for (j = 0; j < uscf->servers->nelts; j++) {
+            len += 150 + servers[j].name.len; // More precise estimation
+            if (j > 0) len++; // comma separator
+        }
     }
 
     b = ngx_create_temp_buf(r->pool, len);
@@ -173,11 +169,11 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
     p = b->pos;
     p = ngx_sprintf(p, "{\"servers\":[");
 
-    if (uscfp[i]->servers) {
-        servers = uscfp[i]->servers->elts;
-        peers = uscfp[i]->peer.data;
+    if (uscf->servers) {
+        servers = uscf->servers->elts;
+        peers = uscf->peer.data;
         
-        for (j = 0; j < uscfp[i]->servers->nelts; j++) {
+        for (j = 0; j < uscf->servers->nelts; j++) {
             if (j > 0) {
                 *p++ = ',';
             }
@@ -241,12 +237,33 @@ ngx_http_upstream_mgmt_list_single(ngx_http_request_t *r, ngx_str_t *upstream_na
     return ngx_http_output_filter(r, &out);
 }
 
+// Input validation helper
+static ngx_int_t
+ngx_http_upstream_mgmt_validate_request(ngx_http_request_t *r)
+{
+    if (r == NULL || r->uri.data == NULL || r->uri.len == 0) {
+        return NGX_ERROR;
+    }
+    
+    // Check for reasonable URI length to prevent buffer overflows
+    if (r->uri.len > 1024) {
+        return NGX_ERROR;
+    }
+    
+    return NGX_OK;
+}
+
 // Main request handler
 static ngx_int_t
 ngx_http_upstream_mgmt_handler(ngx_http_request_t *r)
 {
     ngx_int_t rc;
     ngx_str_t upstream_name;
+
+    // Validate request
+    if (ngx_http_upstream_mgmt_validate_request(r) != NGX_OK) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
 
     if (r->method == NGX_HTTP_GET) {
         u_char *uri = r->uri.data;
@@ -436,47 +453,75 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
     ngx_chain_t out;
     ngx_str_t request_body = ngx_null_string;
 
-    // Extract upstream and server ID from URI
+    // Extract upstream and server ID from URI with bounds checking
     u_char *uri = r->uri.data;
+    u_char *uri_end = uri + r->uri.len;
     u_char *upstream_start = (u_char *)ngx_strstr((char *)uri, "/api/upstreams/");
-    if (upstream_start) {
-        upstream_start += ngx_strlen("/api/upstreams/");
-        u_char *server_start = (u_char *)ngx_strstr((char *)upstream_start, "/servers/");
-        if (server_start) {
-            req.upstream.data = upstream_start;
-            req.upstream.len = server_start - upstream_start;
-
-            server_start += ngx_strlen("/servers/");
-            u_char *server_id_end = server_start;
-
-            // Locate numeric server ID
-            while (*server_id_end >= '0' && *server_id_end <= '9') {
-                server_id_end++;
-            }
-
-            if (server_id_end == server_start) {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Server ID not found in URI");
-                response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
-                response.len = ngx_strlen(response.data);
-                goto send_response;
-            }
-
-            req.server_id = ngx_atoi(server_start, server_id_end - server_start);
-            if (req.server_id == (ngx_uint_t)NGX_ERROR) {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid server ID in URI");
-                response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
-                response.len = ngx_strlen(response.data);
-                goto send_response;
-            }
-        } else {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid URI format, missing '/servers/'");
-            response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
-            response.len = ngx_strlen(response.data);
-            goto send_response;
-        }
-    } else {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "URI does not start with '/api/upstreams/'");
+    
+    if (upstream_start == NULL || upstream_start >= uri_end) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "URI does not contain '/api/upstreams/'");
         response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    
+    upstream_start += ngx_strlen("/api/upstreams/");
+    if (upstream_start >= uri_end) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "URI too short after '/api/upstreams/'");
+        response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    
+    u_char *server_start = (u_char *)ngx_strnstr((char *)upstream_start, "/servers/", uri_end - upstream_start);
+    if (server_start == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid URI format, missing '/servers/'");
+        response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    
+    // Validate upstream name length
+    size_t upstream_len = server_start - upstream_start;
+    if (upstream_len == 0 || upstream_len > 255) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid upstream name length: %uz", upstream_len);
+        response.data = (u_char *) "{\"error\":\"Invalid upstream name\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    
+    req.upstream.data = upstream_start;
+    req.upstream.len = upstream_len;
+
+    server_start += ngx_strlen("/servers/");
+    if (server_start >= uri_end) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "URI too short after '/servers/'");
+        response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+    
+    u_char *server_id_end = server_start;
+    size_t max_digits = 10; // Reasonable limit for server ID
+    size_t digit_count = 0;
+
+    // Locate numeric server ID with bounds checking
+    while (server_id_end < uri_end && *server_id_end >= '0' && *server_id_end <= '9' && digit_count < max_digits) {
+        server_id_end++;
+        digit_count++;
+    }
+
+    if (server_id_end == server_start || digit_count == 0) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Server ID not found in URI");
+        response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
+        response.len = ngx_strlen(response.data);
+        goto send_response;
+    }
+
+    req.server_id = ngx_atoi(server_start, server_id_end - server_start);
+    if (req.server_id == (ngx_uint_t)NGX_ERROR) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid server ID in URI");
+        response.data = (u_char *) "{\"error\":\"Invalid server ID\"}";
         response.len = ngx_strlen(response.data);
         goto send_response;
     }
@@ -512,17 +557,32 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
         request_body.len = ngx_buf_size(r->request_body->bufs->buf);
     }
 
-    // Simple JSON parsing
-    if (ngx_strnstr(request_body.data, "\"drain\":true", request_body.len)) {
+    // Enhanced JSON parsing with validation
+    u_char *drain_pos = (u_char *)ngx_strnstr((char *)request_body.data, "\"drain\":", request_body.len);
+    if (drain_pos == NULL) {
+        response.data = (u_char *) "{\"error\":\"Missing drain parameter\"}";
+        response.len = ngx_strlen(response.data);
+        r->headers_out.status = NGX_HTTP_BAD_REQUEST;
+        goto send_response;
+    }
+    
+    drain_pos += 8; // Skip "drain":
+    while (drain_pos < request_body.data + request_body.len && (*drain_pos == ' ' || *drain_pos == '\t')) {
+        drain_pos++; // Skip whitespace
+    }
+    
+    if (drain_pos + 4 <= request_body.data + request_body.len && 
+        ngx_strncmp(drain_pos, "true", 4) == 0) {
         req.state.data = (u_char *) "drain";
         req.state.len = 5;
-    } else if (ngx_strnstr(request_body.data, "\"drain\":false", request_body.len)) {
+    } else if (drain_pos + 5 <= request_body.data + request_body.len && 
+               ngx_strncmp(drain_pos, "false", 5) == 0) {
         req.state.data = (u_char *) "up";
         req.state.len = 2;
     } else {
-        response.data = (u_char *) "{\"error\":\"Invalid drain value\"}";
+        response.data = (u_char *) "{\"error\":\"Invalid drain value - must be true or false\"}";
         response.len = ngx_strlen(response.data);
-        r->headers_out.status = NGX_HTTP_BAD_REQUEST;  // Add this line
+        r->headers_out.status = NGX_HTTP_BAD_REQUEST;
         goto send_response;
     }
 
