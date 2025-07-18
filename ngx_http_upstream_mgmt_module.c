@@ -456,7 +456,7 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
     // Extract upstream and server ID from URI with bounds checking
     u_char *uri = r->uri.data;
     u_char *uri_end = uri + r->uri.len;
-    u_char *upstream_start = (u_char *)ngx_strstr((char *)uri, "/api/upstreams/");
+    u_char *upstream_start = (u_char *)ngx_strstr(uri, (u_char *)"/api/upstreams/");
     
     if (upstream_start == NULL || upstream_start >= uri_end) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "URI does not contain '/api/upstreams/'");
@@ -473,7 +473,7 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
         goto send_response;
     }
     
-    u_char *server_start = (u_char *)ngx_strnstr((char *)upstream_start, "/servers/", uri_end - upstream_start);
+    u_char *server_start = ngx_strnstr(upstream_start, (u_char *)"/servers/", uri_end - upstream_start);
     if (server_start == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Invalid URI format, missing '/servers/'");
         response.data = (u_char *) "{\"error\":\"Invalid URI format\"}";
@@ -558,7 +558,7 @@ ngx_http_upstream_mgmt_update(ngx_http_request_t *r)
     }
 
     // Enhanced JSON parsing with validation
-    u_char *drain_pos = (u_char *)ngx_strnstr((char *)request_body.data, "\"drain\":", request_body.len);
+    u_char *drain_pos = ngx_strnstr(request_body.data, (u_char *)"\"drain\":", request_body.len);
     if (drain_pos == NULL) {
         response.data = (u_char *) "{\"error\":\"Missing drain parameter\"}";
         response.len = ngx_strlen(response.data);

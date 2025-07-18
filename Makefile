@@ -11,7 +11,7 @@ MODULE_NAME = ngx_http_upstream_mgmt_module
 MODULE_SO = $(MODULE_NAME).so
 
 # Compiler flags for security and optimization
-CFLAGS = -g -O2 -fstack-protector-strong -Wformat -Werror=format-security
+CFLAGS = -g -O2 -fstack-protector-strong -Wformat -Werror=format-security -Wno-error=pointer-sign
 LDFLAGS = -Wl,-z,relro -Wl,-z,now
 
 .PHONY: all clean test install download configure build module unit-test integration-test

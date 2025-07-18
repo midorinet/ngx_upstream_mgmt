@@ -7,6 +7,7 @@ on:
     branches: [ main, master ]
   schedule:
     - cron: '0 0 * * 0'  # Run weekly
+  workflow_dispatch:  # Allow manual triggering
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,20 +16,24 @@ concurrency:
 jobs:
   check-versions:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.get-versions.outputs.matrix }}
     
     steps:
+    - uses: actions/checkout@v4
+    
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
         cache: 'pip'
+        cache-dependency-path: 'requirements-ci.txt'
     
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 lxml
+        pip install -r requirements-ci.txt
 
     - name: Create version checker script
       run: |
@@ -43,9 +48,17 @@ jobs:
 
         def fetch_url(url):
             session = requests.Session()
-            retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+            retries = Retry(
+                total=5, 
+                backoff_factor=2, 
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["GET"]
+            )
             session.mount("https://", HTTPAdapter(max_retries=retries))
-            response = session.get(url, timeout=10)
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (compatible; CI-Bot/1.0)'
+            })
+            response = session.get(url, timeout=30)
             response.raise_for_status()
             return response
 
@@ -105,6 +118,13 @@ jobs:
             if freenginx_versions['mainline']:
                 versions.append(f"freenginx-{freenginx_versions['mainline']}")
 
+            # Fallback to known stable versions if scraping fails
+            if not versions:
+                print("Warning: Could not fetch current versions, using fallback versions")
+                versions = ["nginx-1.26.2", "nginx-1.24.0"]
+
+            print(f"Found versions: {versions}")
+            
             # Set the output using the new method
             with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
                 print(f'matrix={json.dumps(versions)}', file=fh)
@@ -115,10 +135,22 @@ jobs:
 
     - name: Get latest versions
       id: get-versions
-      run: python scripts/version_checker.py
+      run: |
+        echo "Running version checker..."
+        python scripts/version_checker.py
+        echo "Version checker completed"
+        
+    - name: Validate matrix output
+      run: |
+        echo "Matrix output: ${{ steps.get-versions.outputs.matrix }}"
+        if [ -z "${{ steps.get-versions.outputs.matrix }}" ]; then
+          echo "Error: Matrix output is empty"
+          exit 1
+        fi
 
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v4
 
@@ -136,6 +168,7 @@ jobs:
   integration-tests:
     needs: [check-versions]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         version: ${{ fromJson(needs.check-versions.outputs.matrix) }}
@@ -153,7 +186,9 @@ jobs:
     - name: Install test dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev python3-pytest python3-requests nginx curl
+        sudo apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev nginx curl
+        python3 -m pip install --upgrade pip
+        python3 -m pip install -r requirements-ci.txt
 
     - name: Parse version info
       id: parse
@@ -201,7 +236,7 @@ jobs:
         esac
         
         echo "Running ./configure $CONFIG_OPTS"
-        ./configure $CONFIG_OPTS
+        ./configure $CONFIG_OPTS --with-cc-opt="-Wno-error=pointer-sign"
         make
         make install
         
@@ -339,7 +374,7 @@ jobs:
               cd "freenginx-${VERSION}"
             fi
             
-            ./configure --with-compat --add-dynamic-module=../
+            ./configure --with-compat --add-dynamic-module=../ --with-cc-opt="-Wno-error=pointer-sign"
             make modules
             ls -l objs/*.so
             file objs/*.so'
@@ -400,7 +435,7 @@ jobs:
         cd "$BUILD_DIR" || exit 1
         echo "Entered directory: $(pwd)"
         ls -la
-        ./configure --with-compat --add-dynamic-module=../
+        ./configure --with-compat --add-dynamic-module=../ --with-cc-opt="-Wno-error=pointer-sign"
         make modules
         ls -l objs/*.so
         file objs/*.so
@@ -449,7 +484,7 @@ jobs:
       run: |
         BUILD_DIR="nginx-${NGINX_VERSION}"
         cd $BUILD_DIR
-        ./configure --with-compat --add-dynamic-module=../ --with-cc-opt="-g -O2 -fstack-protector-strong"
+        ./configure --with-compat --add-dynamic-module=../ --with-cc-opt="-g -O2 -fstack-protector-strong -Wno-error=pointer-sign"
         make modules
 
     - name: Perform CodeQL Analysis

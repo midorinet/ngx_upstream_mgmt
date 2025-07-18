@@ -1,0 +1,2 @@
+# Production dependencies (none for this C module)
+# This file exists to satisfy Python tooling requirements
