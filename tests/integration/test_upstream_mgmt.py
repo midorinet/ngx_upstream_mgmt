@@ -7,9 +7,16 @@ import logging
 import json
 from pathlib import Path
 from collections import defaultdict
+from contextlib import contextmanager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Constants
+API_BASE_URL = 'http://localhost:8080'
+BACKEND_PORTS = [8081, 8082]
+REQUEST_TIMEOUT = 5
+NGINX_STARTUP_WAIT = 2
 
 class BackendServer:
     def __init__(self, port):
@@ -22,21 +29,41 @@ class BackendServer:
                 self.end_headers()
                 response = f"Response from backend port {port}"
                 self.wfile.write(response.encode())
+            
+            def log_message(self, format, *args):
+                # Suppress HTTP server logs
+                pass
                 
         self.port = port
         self.server = HTTPServer(('localhost', port), Handler)
         self.server_thread = None
+        self.is_running = False
     
     def start(self):
         import threading
-        self.server_thread = threading.Thread(target=self.server.serve_forever)
-        self.server_thread.daemon = True
-        self.server_thread.start()
+        if not self.is_running:
+            self.server_thread = threading.Thread(target=self.server.serve_forever)
+            self.server_thread.daemon = True
+            self.server_thread.start()
+            self.is_running = True
+            logger.debug(f"Backend server started on port {self.port}")
     
     def stop(self):
-        if self.server:
+        if self.server and self.is_running:
             self.server.shutdown()
             self.server.server_close()
+            self.is_running = False
+            logger.debug(f"Backend server stopped on port {self.port}")
+
+@contextmanager
+def backend_server_context(port):
+    """Context manager for backend servers"""
+    server = BackendServer(port)
+    try:
+        server.start()
+        yield server
+    finally:
+        server.stop()
 
 class NginxServer:
     def __init__(self, nginx_bin, config_path, module_path):
@@ -45,6 +72,7 @@ class NginxServer:
         self.module_path = module_path
         self.process = None
         self.workdir = Path(config_path).parent
+        self.is_running = False
     
     def create_dirs(self):
         """Create necessary nginx directories"""
@@ -52,65 +80,133 @@ class NginxServer:
         (self.workdir / "temp").mkdir(exist_ok=True)
     
     def _write_config(self):
-        """Write nginx configuration"""
+        """Write optimized nginx configuration"""
         config_content = f"""
-    worker_processes  1;
-    error_log logs/error.log debug;
-    pid logs/nginx.pid;
+worker_processes  1;
+error_log logs/error.log warn;
+pid logs/nginx.pid;
+
+# Load dynamic modules
+load_module {self.module_path};
+
+events {{
+    worker_connections  1024;
+    use epoll;
+}}
+
+http {{
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
     
-    # Load dynamic modules
-    load_module {self.module_path};
-    
-    events {{
-        worker_connections  1024;
+    upstream backend {{
+        server 127.0.0.1:8081 max_fails=2 fail_timeout=5s;
+        server 127.0.0.1:8082 max_fails=2 fail_timeout=5s;
     }}
     
-    http {{
-        upstream backend {{
-            server 127.0.0.1:8081;
-            server 127.0.0.1:8082;
+    server {{
+        listen 8080;
+        server_name localhost;
+        
+        location /api/upstreams {{
+            upstream_mgmt;
+            access_log off;
         }}
         
-        server {{
-            listen 8080;
-            
-            location /api/upstreams {{
-                upstream_mgmt;
-            }}
-            
-            location / {{
-                proxy_pass http://backend;
-                add_header X-Upstream $upstream_addr always;
-                proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
-            }}
+        location / {{
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            add_header X-Upstream $upstream_addr always;
+            proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+            proxy_connect_timeout 1s;
+            proxy_send_timeout 1s;
+            proxy_read_timeout 1s;
         }}
     }}
-    """
+}}
+"""
         Path(self.config_path).write_text(config_content)
     
     def start(self):
+        if self.is_running:
+            return
+            
         self.create_dirs()
         self._write_config()
+        
+        # Test nginx configuration first
+        test_cmd = [self.nginx_bin, '-t', '-p', str(self.workdir), '-c', self.config_path]
+        test_result = subprocess.run(test_cmd, capture_output=True, text=True)
+        if test_result.returncode != 0:
+            raise RuntimeError(f"Nginx config test failed:\n{test_result.stderr}")
+        
         self.process = subprocess.Popen([
             self.nginx_bin,
             '-p', str(self.workdir),
             '-c', self.config_path,
             '-g', 'daemon off;'
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        time.sleep(2)
+        
+        time.sleep(NGINX_STARTUP_WAIT)
         
         if self.process.poll() is not None:
             out, err = self.process.communicate()
             raise RuntimeError(f"Nginx failed to start:\nSTDOUT:\n{out.decode()}\nSTDERR:\n{err.decode()}")
+        
+        self.is_running = True
+        logger.debug("Nginx server started successfully")
     
     def stop(self):
-        if self.process:
+        if self.process and self.is_running:
             self.process.terminate()
             try:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
+            self.is_running = False
+            logger.debug("Nginx server stopped")
+
+# Helper functions for API calls - optimized with retry logic
+def make_api_request(method, endpoint, data=None, expected_status=200, retries=3):
+    """Make API request with proper error handling and retry logic"""
+    url = f"{API_BASE_URL}{endpoint}"
+    headers = {'Content-Type': 'application/json'} if data else {}
+    
+    for attempt in range(retries):
+        try:
+            if method.upper() == 'GET':
+                response = requests.get(url, timeout=REQUEST_TIMEOUT)
+            elif method.upper() == 'PATCH':
+                response = requests.patch(url, data=data, headers=headers, timeout=REQUEST_TIMEOUT)
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+            
+            if expected_status and response.status_code != expected_status:
+                logger.warning(f"Unexpected status {response.status_code} for {method} {endpoint}")
+            
+            return response
+            
+        except requests.RequestException as e:
+            if attempt == retries - 1:  # Last attempt
+                logger.error(f"Request failed after {retries} attempts: {e}")
+                raise
+            else:
+                logger.warning(f"Request attempt {attempt + 1} failed, retrying: {e}")
+                time.sleep(0.1)  # Brief delay before retry
+
+def get_upstream_servers(upstream_name='backend'):
+    """Get upstream server configuration"""
+    response = make_api_request('GET', f'/api/upstreams/{upstream_name}')
+    return response.json() if response.status_code == 200 else None
+
+def set_server_drain_state(upstream_name, server_id, drain_state):
+    """Set server drain state"""
+    endpoint = f'/api/upstreams/{upstream_name}/servers/{server_id}'
+    payload = json.dumps({"drain": drain_state})
+    return make_api_request('PATCH', endpoint, data=payload, expected_status=None)
 
 @pytest.fixture
 def backend_servers():
