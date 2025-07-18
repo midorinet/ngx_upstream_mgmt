@@ -54,50 +54,38 @@ class NginxServer:
     def _write_config(self):
         """Write nginx configuration"""
         config_content = f"""
-worker_processes  1;
-error_log logs/error.log debug;
-pid logs/nginx.pid;
-
-# Load dynamic modules
-load_module {self.module_path};
-
-events {{
-    worker_connections  1024;
-}}
-
-http {{
-    access_log logs/access.log;
+    worker_processes  1;
+    error_log logs/error.log debug;
+    pid logs/nginx.pid;
     
-    upstream backend {{
-        server 127.0.0.1:8081 max_fails=3 fail_timeout=30s;
-        server 127.0.0.1:8082 max_fails=3 fail_timeout=30s;
+    # Load dynamic modules
+    load_module {self.module_path};
+    
+    events {{
+        worker_connections  1024;
     }}
     
-    server {{
-        listen 8080;
-        server_name localhost;
-        
-        # API endpoints for upstream management
-        location ~ ^/api/upstreams/?(.*)$ {{
-            upstream_mgmt;
-            access_log logs/api_access.log;
-            error_log logs/api_error.log debug;
+    http {{
+        upstream backend {{
+            server 127.0.0.1:8081;
+            server 127.0.0.1:8082;
         }}
         
-        # Default proxy location
-        location / {{
-            proxy_pass http://backend;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            add_header X-Upstream $upstream_addr always;
-            proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
-            proxy_connect_timeout 1s;
-            proxy_send_timeout 1s;
-            proxy_read_timeout 1s;
+        server {{
+            listen 8080;
+            
+            location /api/upstreams {{
+                upstream_mgmt;
+            }}
+            
+            location / {{
+                proxy_pass http://backend;
+                add_header X-Upstream $upstream_addr always;
+                proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+            }}
         }}
     }}
-}}
-"""
+    """
         Path(self.config_path).write_text(config_content)
     
     def start(self):
@@ -230,14 +218,15 @@ def test_set_server_drain_state(nginx_server, backend_servers):
     # Test setting drain to true
     url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
     logger.info(f"PATCH URL: {url}")
-    payload = {"drain": True}
+    payload = '{"drain":true}'
     
     drain_response = requests.patch(
         url,
-        json=payload,
+        data=payload,
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*',
+            'Content-Length': str(len(payload))
         }
     )
     logger.info(f"PATCH Response Status Code: {drain_response.status_code}")
@@ -277,12 +266,14 @@ def test_unset_server_drain_state(nginx_server, backend_servers):
 
     # First set drain to true
     url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
+    payload = '{"drain":true}'
     set_drain_response = requests.patch(
         url,
-        json={"drain": True},
+        data=payload,
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*',
+            'Content-Length': str(len(payload))
         }
     )
     logger.info(f"Set drain response: {set_drain_response.status_code} - {set_drain_response.text}")
@@ -291,12 +282,14 @@ def test_unset_server_drain_state(nginx_server, backend_servers):
     assert set_drain_response.status_code == 200
 
     # Then set drain to false
+    payload = '{"drain":false}'
     unset_drain_response = requests.patch(
         url,
-        json={"drain": False},
+        data=payload,
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*',
+            'Content-Length': str(len(payload))
         }
     )
     logger.info(f"Unset drain response: {unset_drain_response.status_code} - {unset_drain_response.text}")
@@ -318,10 +311,10 @@ def test_drain_nonexistent_server(nginx_server, backend_servers):
     """Test setting drain state for a non-existent server"""
     response = requests.patch(
         'http://localhost:8080/api/upstreams/backend/servers/999',
-        json={"drain": True},
+        data='{"drain":true}',
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*'
         }
     )
     logger.info(f"Nonexistent server response: {response.status_code} - {response.text}")
@@ -341,10 +334,10 @@ def test_invalid_drain_value(nginx_server, backend_servers):
 
     response = requests.patch(
         f'http://localhost:8080/api/upstreams/backend/servers/{server_id}',
-        json={"drain": "invalid"},
+        data='{"drain":"invalid"}',
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*'
         }
     )
     logger.info(f"Invalid drain value response: {response.status_code} - {response.text}")
@@ -381,13 +374,15 @@ def test_drain_upstream_routing(nginx_server, backend_servers):
     
     # Set drain state for the first server
     url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
+    payload = '{"drain":true}'
     
     drain_response = requests.patch(
         url,
-        json={"drain": True},
+        data=payload,
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*',
+            'Content-Length': str(len(payload))
         }
     )
     logger.info(f"Drain response: {drain_response.status_code} - {drain_response.text}")
@@ -435,10 +430,10 @@ def test_undrain_upstream_routing(nginx_server, backend_servers):
     url = f'http://localhost:8080/api/upstreams/backend/servers/{server_id}'
     drain_response = requests.patch(
         url,
-        json={"drain": True},
+        data='{"drain":true}',
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*'
         }
     )
     assert drain_response.status_code == 200
@@ -457,10 +452,10 @@ def test_undrain_upstream_routing(nginx_server, backend_servers):
     # Then undrain it
     undrain_response = requests.patch(
         url,
-        json={"drain": False},
+        data='{"drain":false}',
         headers={
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': '*/*'
         }
     )
     assert undrain_response.status_code == 200
@@ -499,8 +494,8 @@ def test_multiple_drains(nginx_server, backend_servers):
     url1 = f'http://localhost:8080/api/upstreams/backend/servers/{servers[0]["id"]}'
     response1 = requests.patch(
         url1,
-        json={"drain": True},
-        headers={'Content-Type': 'application/json', 'Accept': 'application/json'}
+        data='{"drain":true}',
+        headers={'Content-Type': 'application/x-www-form-urlencoded'}
     )
     logger.info(f"First drain response: {response1.status_code} - {response1.text}")
     assert response1.status_code == 200
@@ -509,8 +504,8 @@ def test_multiple_drains(nginx_server, backend_servers):
     url2 = f'http://localhost:8080/api/upstreams/backend/servers/{servers[1]["id"]}'
     response2 = requests.patch(
         url2,
-        json={"drain": True},
-        headers={'Content-Type': 'application/json', 'Accept': 'application/json'}
+        data='{"drain":true}',
+        headers={'Content-Type': 'application/x-www-form-urlencoded'}
     )
     logger.info(f"Second drain response: {response2.status_code} - {response2.text}")
     
