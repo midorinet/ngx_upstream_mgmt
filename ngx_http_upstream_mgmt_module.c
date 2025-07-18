@@ -96,8 +96,14 @@ ngx_http_upstream_mgmt_write_server_json_safe(u_char **p, u_char *end,
     ngx_http_upstream_server_t *server, ngx_uint_t id, ngx_flag_t is_down)
 {
     u_char *start = *p;
-    size_t remaining = end - *p;
+    size_t remaining;
     size_t needed;
+    
+    /* Ensure pointers are valid and calculate remaining space safely */
+    if (end <= *p || *p == NULL || end == NULL) {
+        return NGX_ERROR;
+    }
+    remaining = (size_t)(end - *p);
     ngx_str_t safe_name;
     
     if (remaining < NGX_HTTP_UPSTREAM_MGMT_SERVER_JSON_SIZE) {
@@ -140,7 +146,7 @@ ngx_http_upstream_mgmt_write_server_json_safe(u_char **p, u_char *end,
         "\"down\":%s"
         "}",
         id,
-        safe_name.len, safe_name.data,
+        (int)safe_name.len, safe_name.data,
         server->weight,
         server->max_conns,
         server->max_fails,
@@ -518,7 +524,10 @@ ngx_http_upstream_mgmt_build_servers_json(ngx_http_request_t *r,
     end = b->pos + len;
     
     /* Ensure we have space for opening structure */
-    remaining = end - p;
+    if (end <= p || p == NULL || end == NULL) {
+        return NGX_ERROR;
+    }
+    remaining = (size_t)(end - p);
     if (remaining < sizeof("{\"servers\":[]}") - 1) {
         return NGX_ERROR;
     }
@@ -549,7 +558,7 @@ ngx_http_upstream_mgmt_build_servers_json(ngx_http_request_t *r,
     }
 
     /* Ensure space for closing structure */
-    if (end - p < 3) { /* "]} + null terminator" */
+    if ((size_t)(end - p) < 3) { /* "]} + null terminator" */
         return NGX_ERROR;
     }
     
@@ -731,12 +740,12 @@ size_calculated:
         }
         
         /* Check remaining space */
-        if (end - p < upstream_name_len + 32) {
+        if ((size_t)(end - p) < upstream_name_len + 32) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
         
         p = ngx_sprintf(p, "\"%*s\":{\"servers\":[", 
-                       upstream_name_len, uscfp[i]->host.data);
+                       (int)upstream_name_len, uscfp[i]->host.data);
 
         if (uscfp[i]->servers) {
             ctx.uscf = uscfp[i];
@@ -769,7 +778,7 @@ size_calculated:
         }
 
         /* Check space for closing structure */
-        if (end - p < 3) {
+        if ((size_t)(end - p) < 3) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
         p = ngx_sprintf(p, "]}");
